@@ -79,6 +79,7 @@ All configuration is via environment variables:
 | `REASONING` | `high` | Model reasoning effort |
 | `SLEEP_SECONDS` | `10` | Pause between runs (seconds) |
 | `IDLE_SLEEP_SECONDS` | `15` | Pause when no tasks found |
+| `ERROR_SLEEP_SECONDS` | `300` | Pause after a failed run |
 | `RALPH_HOME` | *(auto-detected)* | Ralph installation directory |
 | `RALPH_VERBOSE` | `0` | Set to `1` to show agent output live |
 | `BASE_PROMPT_FILE` | `prompts/{lang}.md` | Override agent prompt file |

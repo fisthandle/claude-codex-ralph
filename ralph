@@ -62,6 +62,7 @@ Zmienne srodowiskowe:
   MODEL         Model AI (domyslnie: gpt-5.3-codex)
   REASONING     Poziom rozumowania (domyslnie: high)
   SLEEP_SECONDS Przerwa miedzy runami (domyslnie: 10)
+  ERROR_SLEEP_SECONDS Przerwa po bledzie runa (domyslnie: 300)
   RALPH_HOME    Katalog instalacji Ralph (auto-wykrywany)"
     ;;
   en)
@@ -110,6 +111,7 @@ Environment:
   MODEL         AI model (default: gpt-5.3-codex)
   REASONING     Reasoning effort (default: high)
   SLEEP_SECONDS Sleep between runs (default: 10)
+  ERROR_SLEEP_SECONDS Sleep after failed run (default: 300)
   RALPH_HOME    Ralph installation directory (auto-detected)"
     ;;
   *)
@@ -136,6 +138,7 @@ MODEL="${MODEL:-gpt-5.3-codex}"
 REASONING="${REASONING:-high}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
 IDLE_SLEEP_SECONDS="${IDLE_SLEEP_SECONDS:-15}"
+ERROR_SLEEP_SECONDS="${ERROR_SLEEP_SECONDS:-300}"
 RALPH_VERBOSE="${RALPH_VERBOSE:-0}"
 RALPH_MODE="${RALPH_MODE:-loop}"
 BASE_PROMPT_FILE="${BASE_PROMPT_FILE:-$RALPH_HOME/prompts/${RALPH_LANG}.md}"
@@ -450,6 +453,8 @@ while true; do
     sleep 1
   elif [[ $no_tasks_detected -eq 1 ]]; then
     sleep_with_dots "$IDLE_SLEEP_SECONDS"
+  elif [[ $exit_code -ne 0 ]]; then
+    sleep_with_dots "$ERROR_SLEEP_SECONDS"
   else
     sleep "$SLEEP_SECONDS"
   fi
