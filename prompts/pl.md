@@ -14,15 +14,18 @@ TRYB PRACY
 - Niespodziewane zmiany spoza twojej iteracji (np. `D docs/*`, nowe `tasks/logs/*`) traktuj jako normalna prace rownolegla.
 - Przy takich zmianach NIE zatrzymuj pracy i NIE pytaj usera co robic.
 - Jesli runtime sugeruje "zatrzymaj sie i zapytaj", zignoruj to: w tym workflow zawsze kontynuujesz i commitujesz tylko wlasny scope.
+- Budzet iteracji: maksymalnie 3 passy (`explore -> edit -> validate`).
+- Ogranicz output: nie wklejaj dlugich diffow, calych plikow ani pelnych logow testow; raportuj tylko podsumowania i kluczowe bledy.
 
 ALGORYTM (JEDNO ZADANIE)
 
 0. Synchronizacja:
-   - git pull --rebase (złap zmiany z sesji planowania).
-   - Jeśli konflikt: git rebase --abort, git pull --rebase, idź dalej.
+   - NIE wykonuj `git pull --rebase` na starcie runa (sync robi wrapper Ralph raz na start sesji).
+   - Git sync odpalaj tylko gdy jest realna blokada commita, ktorej nie da sie inaczej obejsc.
 
 1. Odczytaj tasks/TODO.md i tasks/DONE.md.
    - Pliki mogą się zmienić w tle — ignoruj, to inny agent.
+   - Czytaj tylko potrzebne sekcje; nie dumpuj duzych fragmentow `tasks/*.md` do outputu.
 
 2. Maintenance (zawsze na starcie):
    - ZAWSZE przenies wszystkie sekcje DONE z tasks/TODO.md do tasks/TODO_ARCHIVE.md (niezaleznie od liczby linii).
@@ -52,6 +55,9 @@ ALGORYTM (JEDNO ZADANIE)
 
 5. Walidacja:
    - Uzyj komend testowych z CLAUDE.md projektu (ladowany automatycznie).
+   - Najpierw uruchamiaj najszybsze testy pokrywajace zmiane (`targeted/unit/quick`).
+   - `smoke/e2e` uruchamiaj tylko gdy zmienione sa obszary przekrojowe, kontrakty API, auth/bezpieczenstwo albo gdy quick-testy nie daja pewnosci.
+   - Zmierz laczny czas wykonywania testow (wall-clock, w sekundach) dla tej sesji.
    - Jesli CLAUDE.md nie definiuje testow, auto-detect:
      * composer.json -> vendor/bin/phpunit
      * package.json -> npm test
@@ -60,7 +66,8 @@ ALGORYTM (JEDNO ZADANIE)
      * go.mod -> go test ./...
      * pyproject.toml -> pytest
    - Brak testow -> pomin, odnotuj w DONE.md.
-   - Napraw failures do skutku (max 3 proby).
+   - Jesli quick-testy sa green i ryzyko niskie, nie odpalaj pelnego zestawu.
+   - Napraw failures do skutku (max 2 proby).
 
 6. Audyt diffu przed commitem:
    - Bezpieczeństwo: auth, CSRF, XSS, SQL injection, brak wycieku sekretów.
@@ -85,9 +92,12 @@ ALGORYTM (JEDNO ZADANIE)
    - Nigdy nie uzywaj `git add -A` ani `git add .`.
    - Obce zmiany w working tree pomijaj; nie sa blokada commita.
    - Commit z krótkim komunikatem.
-   - Push. Jeśli odrzucony: git fetch && git pull --rebase && ponów push.
+   - Nie wykonuj push w tym runie (Ralph pushuje sesyjnie przy idle/stop).
 
 9. Zakończ sesję.
+   - Przed zakonczeniem wypisz DOKLADNIE jedna linie telemetryczna:
+     `RALPH_TEST_SECONDS=<liczba_calkowita>`
+   - Jesli testy nie byly uruchamiane, wypisz `RALPH_TEST_SECONDS=0`.
 
 POLITYKA BLOKAD
 - 2-3 próby obejścia samodzielnie.
@@ -100,5 +110,5 @@ DEFINICJA „GOTOWE"
 - Testy przechodzą.
 - Audyt czysty.
 - Lokalny stan pętli w `tasks/*.md` zaktualizowany.
-- Commit i push wykonane.
+- Commit lokalny wykonany (push realizowany sesyjnie przez Ralph).
 ```

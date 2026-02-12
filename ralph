@@ -60,9 +60,13 @@ Zmienne srodowiskowe:
   RALPH_LANG    Jezyk: pl (domyslnie), en
   RALPH_MODE    Tryb: loop (domyslnie), single
   MODEL         Model AI (domyslnie: gpt-5.3-codex)
-  REASONING     Poziom rozumowania (domyslnie: high)
+  REASONING     Poziom rozumowania (domyslnie: medium)
   SLEEP_SECONDS Przerwa miedzy runami (domyslnie: 10)
   ERROR_SLEEP_SECONDS Przerwa po bledzie runa (domyslnie: 300)
+  RALPH_INLINE_CLAUDE    1 = dolacz cala tresc CLAUDE.md do promptu (domyslnie: 0)
+  RALPH_WT_MAX_LINES     Limit linii git status dopinanych do promptu (domyslnie: 40)
+  RALPH_GIT_SYNC_ON_START 1 = git pull --rebase raz na start sesji (domyslnie: 1)
+  RALPH_GIT_PUSH_ON_IDLE  1 = push zaleglych commitow przy idle/stop (domyslnie: 1)
   RALPH_HOME    Katalog instalacji Ralph (auto-wykrywany)"
     ;;
   en)
@@ -109,9 +113,13 @@ Environment:
   RALPH_LANG    Language: pl (default), en
   RALPH_MODE    Mode: loop (default), single
   MODEL         AI model (default: gpt-5.3-codex)
-  REASONING     Reasoning effort (default: high)
+  REASONING     Reasoning effort (default: medium)
   SLEEP_SECONDS Sleep between runs (default: 10)
   ERROR_SLEEP_SECONDS Sleep after failed run (default: 300)
+  RALPH_INLINE_CLAUDE    1 = inline full CLAUDE.md into prompt (default: 0)
+  RALPH_WT_MAX_LINES     Max git status lines appended to prompt (default: 40)
+  RALPH_GIT_SYNC_ON_START 1 = git pull --rebase once at session start (default: 1)
+  RALPH_GIT_PUSH_ON_IDLE  1 = push pending commits on idle/stop (default: 1)
   RALPH_HOME    Ralph installation directory (auto-detected)"
     ;;
   *)
@@ -135,13 +143,21 @@ RUNS_DIR="$LOG_DIR/runs"
 PID_FILE="$LOG_DIR/ralph.pid"
 
 MODEL="${MODEL:-gpt-5.3-codex}"
-REASONING="${REASONING:-high}"
+REASONING="${REASONING:-medium}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
 IDLE_SLEEP_SECONDS="${IDLE_SLEEP_SECONDS:-15}"
 ERROR_SLEEP_SECONDS="${ERROR_SLEEP_SECONDS:-300}"
 RALPH_VERBOSE="${RALPH_VERBOSE:-0}"
 RALPH_MODE="${RALPH_MODE:-loop}"
 BASE_PROMPT_FILE="${BASE_PROMPT_FILE:-$RALPH_HOME/prompts/${RALPH_LANG}.md}"
+RALPH_INLINE_CLAUDE="${RALPH_INLINE_CLAUDE:-0}"
+RALPH_WT_MAX_LINES="${RALPH_WT_MAX_LINES:-40}"
+RALPH_GIT_SYNC_ON_START="${RALPH_GIT_SYNC_ON_START:-1}"
+RALPH_GIT_PUSH_ON_IDLE="${RALPH_GIT_PUSH_ON_IDLE:-1}"
+
+if [[ ! "$RALPH_WT_MAX_LINES" =~ ^[0-9]+$ ]]; then
+  RALPH_WT_MAX_LINES="40"
+fi
 
 COMMAND="${1:-help}"
 case "$COMMAND" in
@@ -327,9 +343,65 @@ run_count=0
 total_ok=0
 total_fail=0
 
+sync_pull_once() {
+  [[ "$RALPH_GIT_SYNC_ON_START" == "1" ]] || return 0
+
+  if [[ -z "$(git -C "$ROOT_DIR" remote 2>/dev/null)" ]]; then
+    echo "[$(date +'%F %T')] sync: skip pull -- no git remote"
+    return 0
+  fi
+
+  if ! git -C "$ROOT_DIR" diff --quiet || ! git -C "$ROOT_DIR" diff --cached --quiet; then
+    echo "[$(date +'%F %T')] sync: skip pull -- dirty working tree"
+    return 0
+  fi
+
+  if git -C "$ROOT_DIR" pull --rebase --quiet; then
+    echo "[$(date +'%F %T')] sync: pull --rebase done"
+  else
+    echo "[$(date +'%F %T')] sync: pull --rebase failed (continuing)"
+  fi
+}
+
+push_pending_commits() {
+  [[ "$RALPH_GIT_PUSH_ON_IDLE" == "1" ]] || return 0
+
+  if [[ -z "$(git -C "$ROOT_DIR" remote 2>/dev/null)" ]]; then
+    return 0
+  fi
+
+  if ! git -C "$ROOT_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local ahead
+  ahead="$(git -C "$ROOT_DIR" rev-list --count '@{upstream}..HEAD' 2>/dev/null || echo 0)"
+  if [[ ! "$ahead" =~ ^[0-9]+$ ]]; then
+    ahead=0
+  fi
+  if [[ "$ahead" -eq 0 ]]; then
+    return 0
+  fi
+
+  if git -C "$ROOT_DIR" push --quiet; then
+    echo "[$(date +'%F %T')] sync: pushed $ahead commit(s)"
+    return 0
+  fi
+
+  echo "[$(date +'%F %T')] sync: push failed, trying pull --rebase + push"
+  if git -C "$ROOT_DIR" pull --rebase --quiet && git -C "$ROOT_DIR" push --quiet; then
+    echo "[$(date +'%F %T')] sync: push recovered after rebase"
+  else
+    echo "[$(date +'%F %T')] sync: push failed (continuing)"
+  fi
+}
+
+sync_pull_once
+
 while true; do
   restart_self_if_requested
   [[ -f "$STOP_FILE" ]] && {
+    push_pending_commits
     echo "Stop file detected."
     exit 0
   }
@@ -346,9 +418,32 @@ while true; do
   notify normal "Run #$run_count started"
 
   combined="$(mktemp)"
-  [[ -f "$HOME/.claude/CLAUDE.md" ]] && cat "$HOME/.claude/CLAUDE.md" >> "$combined"
-  [[ -f "$ROOT_DIR/CLAUDE.md" ]] && cat "$ROOT_DIR/CLAUDE.md" >> "$combined"
-  baseline_status="$(git -C "$ROOT_DIR" status --short | head -n 200 || true)"
+  context_files=()
+  [[ -f "$HOME/.claude/CLAUDE.md" ]] && context_files+=("$HOME/.claude/CLAUDE.md")
+  [[ -f "$ROOT_DIR/CLAUDE.md" ]] && context_files+=("$ROOT_DIR/CLAUDE.md")
+
+  if [[ "$RALPH_INLINE_CLAUDE" == "1" ]]; then
+    for context_file in "${context_files[@]}"; do
+      cat "$context_file" >> "$combined"
+      echo >> "$combined"
+    done
+  elif [[ ${#context_files[@]} -gt 0 ]]; then
+    {
+      echo "# Runtime context files"
+      echo "Use these files as source of truth, but read only relevant fragments:"
+      for context_file in "${context_files[@]}"; do
+        echo "- $context_file"
+      done
+      echo
+    } >> "$combined"
+  fi
+
+  baseline_all_status="$(git -C "$ROOT_DIR" status --short || true)"
+  baseline_status="$(printf '%s\n' "$baseline_all_status" | head -n "$RALPH_WT_MAX_LINES" || true)"
+  baseline_count=0
+  if [[ -n "$baseline_all_status" ]]; then
+    baseline_count="$(printf '%s\n' "$baseline_all_status" | wc -l | tr -d ' ')"
+  fi
   {
     echo
     echo "$MSG_WT_HEADER"
@@ -357,6 +452,9 @@ while true; do
     if [[ -n "$baseline_status" ]]; then
       echo "$MSG_WT_LIST"
       printf '%s\n' "$baseline_status"
+      if [[ "$baseline_count" -gt "$RALPH_WT_MAX_LINES" ]]; then
+        echo "... (+$((baseline_count - RALPH_WT_MAX_LINES)) more)"
+      fi
     else
       echo "$MSG_WT_NONE"
     fi
@@ -369,6 +467,7 @@ while true; do
     echo "run=$run_count"
     echo "started=$(date +'%F %T')"
     echo "model=$MODEL"
+    echo "reasoning=$REASONING"
     echo "root=$ROOT_DIR"
   } > "$run_dir/meta.txt"
 
@@ -376,6 +475,7 @@ while true; do
   done_before="$(file_hash "$DONE_FILE")"
   archive_before="$(file_hash "$TODO_ARCHIVE_FILE")"
 
+  run_started_epoch="$(date +%s)"
   set +e
   if [[ "$RALPH_VERBOSE" == "1" ]]; then
     codex -a never -s workspace-write exec \
@@ -393,13 +493,21 @@ while true; do
     exit_code=$?
   fi
   set -e
+  run_finished_epoch="$(date +%s)"
   rm -f "$combined"
+
+  test_seconds="$(grep -Eo 'RALPH_TEST_SECONDS=[0-9]+' "$log_file" | tail -n 1 | cut -d= -f2 || true)"
+  if [[ -z "$test_seconds" ]]; then
+    test_seconds="unknown"
+  fi
 
   todo_after="$(file_hash "$TODO_FILE")"
   done_after="$(file_hash "$DONE_FILE")"
   archive_after="$(file_hash "$TODO_ARCHIVE_FILE")"
 
   echo "exit_code=$exit_code" >> "$run_dir/meta.txt"
+  echo "test_seconds=$test_seconds" >> "$run_dir/meta.txt"
+  echo "duration_seconds=$((run_finished_epoch - run_started_epoch))" >> "$run_dir/meta.txt"
   echo "finished=$(date +'%F %T')" >> "$run_dir/meta.txt"
 
   no_tasks_detected=0
@@ -423,10 +531,12 @@ while true; do
     else
       echo "[$(date +'%F %T')] $status"
     fi
+    echo "[$(date +'%F %T')] run #$run_count test_seconds=$test_seconds"
     notify normal "Run #$run_count: $status"
   else
     total_fail=$((total_fail + 1))
     echo "[$(date +'%F %T')] $MSG_ERROR: run #$run_count exit=$exit_code (log: $log_file)"
+    echo "[$(date +'%F %T')] run #$run_count test_seconds=$test_seconds"
     tail -n 40 "$log_file" || true
     notify critical "Run #$run_count $MSG_FAILED (exit $exit_code)"
   fi
@@ -434,17 +544,23 @@ while true; do
   if [[ "$RALPH_MODE" == "single" ]]; then
     if [[ $no_tasks_detected -eq 1 || $guidance_detected -eq 1 ]]; then
       [[ -f "$STOP_FILE" ]] && {
+        push_pending_commits
         echo "Stop file detected."
         exit 0
       }
+      if [[ $no_tasks_detected -eq 1 ]]; then
+        push_pending_commits
+      fi
       sleep_with_dots "$IDLE_SLEEP_SECONDS"
       continue
     fi
+    push_pending_commits
     echo "[$(date +'%F %T')] $MSG_SINGLE_STOPPED"
     exit "$exit_code"
   fi
 
   [[ -f "$STOP_FILE" ]] && {
+    push_pending_commits
     echo "Stop file detected."
     exit 0
   }
@@ -452,6 +568,7 @@ while true; do
   if [[ $guidance_detected -eq 1 ]]; then
     sleep 1
   elif [[ $no_tasks_detected -eq 1 ]]; then
+    push_pending_commits
     sleep_with_dots "$IDLE_SLEEP_SECONDS"
   elif [[ $exit_code -ne 0 ]]; then
     sleep_with_dots "$ERROR_SLEEP_SECONDS"

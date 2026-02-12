@@ -1,7 +1,8 @@
 # Ralph
 
 Autonomous AI coding loop. Reads tasks from `TODO.md`, dispatches an AI agent
-to implement them one by one, commits, pushes, and loops.
+to implement them one by one, commits, and loops. Ralph syncs with remote at
+the session level.
 
 ## How it works
 
@@ -13,7 +14,7 @@ tasks/TODO.md ──► ralph picks first open task
                   implements, tests, audits
                       │
                       ▼
-                  git commit + push
+                  git commit
                       │
                       ▼
                   sleep, then loop ◄──┐
@@ -25,9 +26,9 @@ Each iteration:
 1. Ralph reads `tasks/TODO.md` in your project repo
 2. Picks the first task not marked as DONE
 3. Dispatches a [Codex](https://github.com/openai/codex) agent with full-auto permissions
-4. Agent implements the task end-to-end, runs tests, commits and pushes
+4. Agent implements the task end-to-end, runs tests, and commits
 5. Ralph detects completion, waits, then starts next iteration
-6. No tasks left? Ralph idles and polls periodically
+6. No tasks left? Ralph pushes pending commits, then idles and polls periodically
 
 ## Requirements
 
@@ -76,12 +77,16 @@ All configuration is via environment variables:
 | `RALPH_LANG` | `pl` | Language: `pl`, `en` |
 | `RALPH_MODE` | `loop` | Mode: `loop` (keep going), `single` (one task then stop) |
 | `MODEL` | `gpt-5.3-codex` | AI model name passed to codex |
-| `REASONING` | `high` | Model reasoning effort |
+| `REASONING` | `medium` | Model reasoning effort |
 | `SLEEP_SECONDS` | `10` | Pause between runs (seconds) |
 | `IDLE_SLEEP_SECONDS` | `15` | Pause when no tasks found |
 | `ERROR_SLEEP_SECONDS` | `300` | Pause after a failed run |
 | `RALPH_HOME` | *(auto-detected)* | Ralph installation directory |
 | `RALPH_VERBOSE` | `0` | Set to `1` to show agent output live |
+| `RALPH_INLINE_CLAUDE` | `0` | Set to `1` to inline full `CLAUDE.md` files into each prompt |
+| `RALPH_WT_MAX_LINES` | `40` | Max `git status --short` lines appended to each prompt |
+| `RALPH_GIT_SYNC_ON_START` | `1` | Set to `0` to skip one-time `git pull --rebase` at session start |
+| `RALPH_GIT_PUSH_ON_IDLE` | `1` | Set to `0` to disable auto-push of pending commits on idle/stop |
 | `BASE_PROMPT_FILE` | `prompts/{lang}.md` | Override agent prompt file |
 
 Example:
@@ -154,7 +159,7 @@ tasks/
       20260212-143000-1/
         stdout.log     # agent output
         prompt.txt     # prompt sent to agent
-        meta.txt       # run metadata
+        meta.txt       # run metadata (incl. test_seconds, reasoning, duration_seconds)
 ```
 
 ## License

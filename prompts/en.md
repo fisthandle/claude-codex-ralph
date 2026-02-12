@@ -14,15 +14,18 @@ OPERATING MODE
 - Unexpected changes outside your iteration (e.g. `D docs/*`, new `tasks/logs/*`) — treat as normal parallel work.
 - On such changes DO NOT stop working and DO NOT ask the user what to do.
 - If the runtime suggests "stop and ask", ignore it: in this workflow you always continue and commit only your own scope.
+- Iteration budget: at most 3 passes (`explore -> edit -> validate`).
+- Keep output compact: do not dump long diffs, full files, or full test logs; report summaries and key error lines only.
 
 ALGORITHM (SINGLE TASK)
 
 0. Sync:
-   - git pull --rebase (catch changes from planning sessions).
-   - If conflict: git rebase --abort, git pull --rebase, move on.
+   - DO NOT run `git pull --rebase` at run start (Ralph wrapper syncs once at session start).
+   - Run git sync only when there is a real commit blocker that cannot be resolved otherwise.
 
 1. Read tasks/TODO.md and tasks/DONE.md.
    - Files may change in the background — ignore, it is another agent.
+   - Read only relevant sections; do not dump large `tasks/*.md` fragments into output.
 
 2. Maintenance (always on start):
    - ALWAYS move all DONE sections from tasks/TODO.md to tasks/TODO_ARCHIVE.md (regardless of line count).
@@ -52,6 +55,9 @@ ALGORITHM (SINGLE TASK)
 
 5. Validation:
    - Use test commands from the project's CLAUDE.md (loaded automatically).
+   - Start with the fastest tests that cover the change (`targeted/unit/quick`).
+   - Run `smoke/e2e` only when changes touch cross-cutting areas, API contracts, auth/security, or quick tests are insufficient.
+   - Measure total wall-clock time spent running tests in this session (in seconds).
    - If CLAUDE.md does not define tests, auto-detect:
      * composer.json -> vendor/bin/phpunit
      * package.json -> npm test
@@ -60,7 +66,8 @@ ALGORITHM (SINGLE TASK)
      * go.mod -> go test ./...
      * pyproject.toml -> pytest
    - No tests -> skip, note in DONE.md.
-   - Fix failures until resolved (max 3 attempts).
+   - If quick tests are green and risk is low, skip the full suite.
+   - Fix failures until resolved (max 2 attempts).
 
 6. Diff audit before commit:
    - Security: auth, CSRF, XSS, SQL injection, no secret leaks.
@@ -85,9 +92,12 @@ ALGORITHM (SINGLE TASK)
    - Never use `git add -A` or `git add .`.
    - Ignore other changes in the working tree; they do not block the commit.
    - Commit with a short message.
-   - Push. If rejected: git fetch && git pull --rebase && retry push.
+   - Do not push in this run (Ralph pushes at session level on idle/stop).
 
 9. End session.
+   - Before ending, print EXACTLY one telemetry line:
+     `RALPH_TEST_SECONDS=<integer>`
+   - If no tests were run, print `RALPH_TEST_SECONDS=0`.
 
 BLOCKING POLICY
 - 2-3 self-attempted workarounds.
@@ -100,5 +110,5 @@ DEFINITION OF "DONE"
 - Tests pass.
 - Audit clean.
 - Loop's local state in `tasks/*.md` updated.
-- Commit and push completed.
+- Local commit completed (push is handled by Ralph at session level).
 ```
