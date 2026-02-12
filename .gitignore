@@ -1,0 +1,11 @@
+# Runtime state (generated per target repo, not part of ralph itself)
+tasks/
+*.pid
+*.log
+
+# Claude Code local state
+.claude/
+
+# Editor
+*.swp
+*~

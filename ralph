@@ -1,0 +1,456 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+_script_dir() {
+  local src="${BASH_SOURCE[0]}"
+  while [ -L "$src" ]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  cd -P "$(dirname "$src")" && pwd
+}
+
+RALPH_HOME="${RALPH_HOME:-$(_script_dir)}"
+RALPH_LANG="${RALPH_LANG:-pl}"
+
+case "$RALPH_LANG" in
+  pl)
+    MSG_GIT_ONLY="To polecenie dziala tylko w repo git."
+    MSG_USAGE_RESTART="blad: podaj PID. Uzycie: ralph restart <pid>"
+    MSG_BAD_PID="blad: nieprawidlowy PID:"
+    MSG_STOP_REMOVED="usunieto stop, mozesz ponownie ustawic powtarzajac komende"
+    MSG_STOP_SET="ustawiono stop"
+    MSG_RESTART_PLANNED="restart zaplanowany: przeladuje sie po biezacym runie"
+    MSG_RESTART_WRONG_PID="blad: aktywny PID dla tego repo to"
+    MSG_RESTART_NO_PROCESS="blad: brak aktywnego procesu ralph run w tym repo"
+    MSG_ALREADY_RUNNING="blad: ralph juz dziala. Uzyj: ralph restart"
+    MSG_CODEX_NOT_FOUND="codex nie znaleziony w PATH"
+    MSG_PROMPT_NOT_FOUND="Prompt nie znaleziony:"
+    MSG_BAD_MODE="Nieznany RALPH_MODE (dozwolone: loop, single):"
+    MSG_STARTED="uruchomiono"
+    MSG_STOPPED="Ralph zatrzymany."
+    MSG_RUN_DONE="run zakonczony"
+    MSG_IDLE="idle"
+    MSG_NEEDS_DECISION="wymaga decyzji (auto-continue)"
+    MSG_TASK_DONE="task wykonany"
+    MSG_ERROR="blad"
+    MSG_SINGLE_STOPPED="zatrzymano: tryb single"
+    MSG_RESTART_RELOAD="restart: przeladowanie w tym terminalu"
+    MSG_NO_TASKS_PATTERN='BRAK ZADA[ŃN]'
+    MSG_UNKNOWN_CMD="Nieznana komenda:"
+    MSG_IDLE_PAUSE="przerwa"
+    MSG_NO_TASKS_WAIT="zakonczony: brak otwartych taskow, czekam"
+    MSG_NO_TASKS_WAIT_SUFFIX="na nowe"
+    MSG_DECISION_CONTINUE="agent poprosil o decyzje, kontynuuje automatycznie"
+    MSG_FAILED="FAILED"
+    MSG_WT_HEADER="# Kontekst Working Tree (zastany przed runem)"
+    MSG_WT_INFO="Ponizsze zmiany sa znane i dozwolone. Nie traktuj ich jako blokady."
+    MSG_WT_SKIP="Nie pytaj o decyzje z powodu tych plikow; po prostu je ignoruj i kontynuuj."
+    MSG_WT_LIST="Lista zastanych zmian:"
+    MSG_WT_NONE="Lista zastanych zmian: (brak)"
+    MSG_HELP="Uzycie:
+  ralph run            - uruchom petle agenta
+  ralph restart <pid>  - przeladuj aktywny proces (po PID)
+  ralph stop           - przelacz stop (ustaw/usun tasks/agent.stop)
+  ralph help           - pokaz to menu
+
+Zmienne srodowiskowe:
+  RALPH_LANG    Jezyk: pl (domyslnie), en
+  RALPH_MODE    Tryb: loop (domyslnie), single
+  MODEL         Model AI (domyslnie: gpt-5.3-codex)
+  REASONING     Poziom rozumowania (domyslnie: high)
+  SLEEP_SECONDS Przerwa miedzy runami (domyslnie: 10)
+  RALPH_HOME    Katalog instalacji Ralph (auto-wykrywany)"
+    ;;
+  en)
+    MSG_GIT_ONLY="This command only works inside a git repo."
+    MSG_USAGE_RESTART="error: provide PID. Usage: ralph restart <pid>"
+    MSG_BAD_PID="error: invalid PID:"
+    MSG_STOP_REMOVED="stop removed, repeat command to set again"
+    MSG_STOP_SET="stop set"
+    MSG_RESTART_PLANNED="restart scheduled: will reload after current run"
+    MSG_RESTART_WRONG_PID="error: active PID for this repo is"
+    MSG_RESTART_NO_PROCESS="error: no active ralph run process in this repo"
+    MSG_ALREADY_RUNNING="error: ralph already running. Use: ralph restart"
+    MSG_CODEX_NOT_FOUND="codex not found in PATH"
+    MSG_PROMPT_NOT_FOUND="Prompt not found:"
+    MSG_BAD_MODE="Unknown RALPH_MODE (allowed: loop, single):"
+    MSG_STARTED="started"
+    MSG_STOPPED="Ralph stopped."
+    MSG_RUN_DONE="run finished"
+    MSG_IDLE="idle"
+    MSG_NEEDS_DECISION="needs decision (auto-continue)"
+    MSG_TASK_DONE="task completed"
+    MSG_ERROR="error"
+    MSG_SINGLE_STOPPED="stopped: single mode"
+    MSG_RESTART_RELOAD="restart: reloading in this terminal"
+    MSG_NO_TASKS_PATTERN='NO TASKS'
+    MSG_UNKNOWN_CMD="Unknown command:"
+    MSG_IDLE_PAUSE="pause"
+    MSG_NO_TASKS_WAIT="finished: no open tasks, waiting"
+    MSG_NO_TASKS_WAIT_SUFFIX="for new tasks"
+    MSG_DECISION_CONTINUE="agent asked for decision, continuing automatically"
+    MSG_FAILED="FAILED"
+    MSG_WT_HEADER="# Working Tree Context (state before run)"
+    MSG_WT_INFO="The changes below are known and allowed. Do not treat them as blockers."
+    MSG_WT_SKIP="Do not ask for decisions about these files; just ignore them and continue."
+    MSG_WT_LIST="Existing changes:"
+    MSG_WT_NONE="Existing changes: (none)"
+    MSG_HELP="Usage:
+  ralph run            - start agent loop
+  ralph restart <pid>  - reload active process (by PID)
+  ralph stop           - toggle stop (set/remove tasks/agent.stop)
+  ralph help           - show this menu
+
+Environment:
+  RALPH_LANG    Language: pl (default), en
+  RALPH_MODE    Mode: loop (default), single
+  MODEL         AI model (default: gpt-5.3-codex)
+  REASONING     Reasoning effort (default: high)
+  SLEEP_SECONDS Sleep between runs (default: 10)
+  RALPH_HOME    Ralph installation directory (auto-detected)"
+    ;;
+  *)
+    echo "Unknown RALPH_LANG: $RALPH_LANG (allowed: pl, en)" >&2
+    exit 2
+    ;;
+esac
+
+ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+  echo "$MSG_GIT_ONLY"
+  exit 1
+}
+TASKS_DIR="$ROOT_DIR/tasks"
+TODO_FILE="$TASKS_DIR/TODO.md"
+DONE_FILE="$TASKS_DIR/DONE.md"
+TODO_ARCHIVE_FILE="$TASKS_DIR/TODO_ARCHIVE.md"
+STOP_FILE="$TASKS_DIR/agent.stop"
+RESTART_FILE="$TASKS_DIR/agent.restart"
+LOG_DIR="$TASKS_DIR/logs"
+RUNS_DIR="$LOG_DIR/runs"
+PID_FILE="$LOG_DIR/ralph.pid"
+
+MODEL="${MODEL:-gpt-5.3-codex}"
+REASONING="${REASONING:-high}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
+IDLE_SLEEP_SECONDS="${IDLE_SLEEP_SECONDS:-15}"
+RALPH_VERBOSE="${RALPH_VERBOSE:-0}"
+RALPH_MODE="${RALPH_MODE:-loop}"
+BASE_PROMPT_FILE="${BASE_PROMPT_FILE:-$RALPH_HOME/prompts/${RALPH_LANG}.md}"
+
+COMMAND="${1:-help}"
+case "$COMMAND" in
+  run)
+    ;;
+  restart)
+    target_pid="${2:-}"
+    if [[ -z "$target_pid" ]]; then
+      echo "$MSG_USAGE_RESTART"
+      exit 2
+    fi
+    if [[ ! "$target_pid" =~ ^[0-9]+$ ]]; then
+      echo "$MSG_BAD_PID $target_pid"
+      exit 2
+    fi
+
+    mkdir -p "$TASKS_DIR" "$RUNS_DIR"
+    if [[ -f "$STOP_FILE" ]]; then
+      rm -f "$STOP_FILE"
+      echo "$MSG_STOP_REMOVED"
+    fi
+
+    active_pid=""
+    if [[ -f "$PID_FILE" ]]; then
+      pid_from_file="$(cat "$PID_FILE" 2>/dev/null || true)"
+      if [[ -n "$pid_from_file" ]] && kill -0 "$pid_from_file" 2>/dev/null; then
+        active_pid="$pid_from_file"
+      fi
+    fi
+
+    if [[ -n "$active_pid" ]]; then
+      if [[ "$active_pid" != "$target_pid" ]]; then
+        echo "$MSG_RESTART_WRONG_PID $active_pid (given: $target_pid)"
+        exit 1
+      fi
+      printf '%s\n' "$target_pid" > "$RESTART_FILE"
+      echo "$MSG_RESTART_PLANNED (pid=$target_pid)"
+      exit 0
+    fi
+
+    echo "$MSG_RESTART_NO_PROCESS"
+    exit 1
+    ;;
+  stop)
+    if [[ -f "$STOP_FILE" ]]; then
+      rm -f "$STOP_FILE"
+      echo "$MSG_STOP_REMOVED"
+    else
+      mkdir -p "$TASKS_DIR"
+      touch "$STOP_FILE"
+      echo "$MSG_STOP_SET: $STOP_FILE"
+    fi
+    exit 0
+    ;;
+  help|--help|-h)
+    echo "$MSG_HELP"
+    exit 0
+    ;;
+  *)
+    echo "$MSG_UNKNOWN_CMD $COMMAND"
+    echo "Usage: ralph [run|restart <pid>|stop|help]"
+    exit 2
+    ;;
+esac
+
+mkdir -p "$TASKS_DIR" "$RUNS_DIR"
+if [[ ! -f "$TODO_FILE" ]]; then
+  if [[ -f "$ROOT_DIR/docs/TODO.md" ]]; then
+    cp "$ROOT_DIR/docs/TODO.md" "$TODO_FILE"
+  else
+    printf '# TODO\n\n' > "$TODO_FILE"
+  fi
+fi
+if [[ ! -f "$DONE_FILE" ]]; then
+  if [[ -f "$ROOT_DIR/docs/DONE.md" ]]; then
+    cp "$ROOT_DIR/docs/DONE.md" "$DONE_FILE"
+  else
+    printf '# DONE\n\n' > "$DONE_FILE"
+  fi
+fi
+if [[ ! -f "$TODO_ARCHIVE_FILE" ]]; then
+  if [[ -f "$ROOT_DIR/docs/TODO_ARCHIVE.md" ]]; then
+    cp "$ROOT_DIR/docs/TODO_ARCHIVE.md" "$TODO_ARCHIVE_FILE"
+  else
+    printf '# TODO Archive\n\n' > "$TODO_ARCHIVE_FILE"
+  fi
+fi
+
+command -v codex >/dev/null || {
+  echo "$MSG_CODEX_NOT_FOUND"
+  exit 1
+}
+[[ -f "$BASE_PROMPT_FILE" ]] || {
+  echo "$MSG_PROMPT_NOT_FOUND $BASE_PROMPT_FILE"
+  exit 1
+}
+if [[ "$RALPH_MODE" != "single" && "$RALPH_MODE" != "loop" ]]; then
+  echo "$MSG_BAD_MODE $RALPH_MODE" >&2
+  exit 1
+fi
+
+file_hash() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    sha256sum "$path" | awk '{print $1}'
+  else
+    echo "-"
+  fi
+}
+
+echo "$MSG_STARTED: repo=$(basename "$ROOT_DIR"), pid=$$, mode=$RALPH_MODE, logs=$LOG_DIR, stop=$STOP_FILE"
+
+notify() {
+  notify-send -u "$1" "Ralph [$(basename "$ROOT_DIR")]" "$2" 2>/dev/null || true
+}
+
+cleanup_pid_file() {
+  if [[ -f "$PID_FILE" ]]; then
+    local pid
+    pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+    if [[ "$pid" == "$$" ]]; then
+      rm -f "$PID_FILE"
+    fi
+  fi
+}
+
+restart_self_if_requested() {
+  if [[ -f "$RESTART_FILE" ]]; then
+    requested_pid="$(head -n 1 "$RESTART_FILE" 2>/dev/null || true)"
+    if [[ -z "$requested_pid" ]]; then
+      rm -f "$RESTART_FILE"
+      return
+    fi
+
+    if [[ "$requested_pid" != "$$" ]]; then
+      if ! kill -0 "$requested_pid" 2>/dev/null; then
+        rm -f "$RESTART_FILE"
+      fi
+      return
+    fi
+
+    rm -f "$RESTART_FILE"
+    rm -f "$STOP_FILE"
+    echo "$MSG_RESTART_RELOAD (pid=$requested_pid)"
+    exec "$0" run
+  fi
+}
+
+if [[ -f "$PID_FILE" ]]; then
+  existing_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] && kill -0 "$existing_pid" 2>/dev/null; then
+    echo "$MSG_ALREADY_RUNNING (pid=$existing_pid)"
+    exit 1
+  fi
+fi
+echo "$$" > "$PID_FILE"
+trap cleanup_pid_file EXIT
+
+sleep_with_dots() {
+  local total="$1"
+  local step=5
+  local elapsed=0
+
+  if [[ "$total" -le 0 ]]; then
+    return 0
+  fi
+
+  while [[ "$elapsed" -lt "$total" ]]; do
+    local chunk="$step"
+    if [[ $((total - elapsed)) -lt "$step" ]]; then
+      chunk=$((total - elapsed))
+    fi
+    sleep "$chunk"
+    elapsed=$((elapsed + chunk))
+    echo -n "."
+  done
+  echo
+}
+
+trap 'echo "$MSG_STOPPED"; notify normal "$MSG_STOPPED"; exit 130' INT TERM
+
+run_count=0
+total_ok=0
+total_fail=0
+
+while true; do
+  restart_self_if_requested
+  [[ -f "$STOP_FILE" ]] && {
+    echo "Stop file detected."
+    exit 0
+  }
+
+  run_count=$((run_count + 1))
+  ts="$(date +%Y%m%d-%H%M%S)"
+  run_dir="$RUNS_DIR/$ts-$run_count"
+  mkdir -p "$run_dir"
+  log_file="$run_dir/stdout.log"
+
+  ln -sfn "$run_dir" "$LOG_DIR/latest"
+
+  echo "[$(date +'%F %T')] $MSG_STARTED run #$run_count"
+  notify normal "Run #$run_count started"
+
+  combined="$(mktemp)"
+  [[ -f "$HOME/.claude/CLAUDE.md" ]] && cat "$HOME/.claude/CLAUDE.md" >> "$combined"
+  [[ -f "$ROOT_DIR/CLAUDE.md" ]] && cat "$ROOT_DIR/CLAUDE.md" >> "$combined"
+  baseline_status="$(git -C "$ROOT_DIR" status --short | head -n 200 || true)"
+  {
+    echo
+    echo "$MSG_WT_HEADER"
+    echo "$MSG_WT_INFO"
+    echo "$MSG_WT_SKIP"
+    if [[ -n "$baseline_status" ]]; then
+      echo "$MSG_WT_LIST"
+      printf '%s\n' "$baseline_status"
+    else
+      echo "$MSG_WT_NONE"
+    fi
+    echo
+  } >> "$combined"
+  cat "$BASE_PROMPT_FILE" >> "$combined"
+
+  cp "$combined" "$run_dir/prompt.txt"
+  {
+    echo "run=$run_count"
+    echo "started=$(date +'%F %T')"
+    echo "model=$MODEL"
+    echo "root=$ROOT_DIR"
+  } > "$run_dir/meta.txt"
+
+  todo_before="$(file_hash "$TODO_FILE")"
+  done_before="$(file_hash "$DONE_FILE")"
+  archive_before="$(file_hash "$TODO_ARCHIVE_FILE")"
+
+  set +e
+  if [[ "$RALPH_VERBOSE" == "1" ]]; then
+    codex -a never -s workspace-write exec \
+      -C "$ROOT_DIR" \
+      -m "$MODEL" \
+      -c model_reasoning_effort="$REASONING" \
+      "$(cat "$combined")" 2>&1 | tee "$log_file"
+    exit_code=${PIPESTATUS[0]}
+  else
+    codex -a never -s workspace-write exec \
+      -C "$ROOT_DIR" \
+      -m "$MODEL" \
+      -c model_reasoning_effort="$REASONING" \
+      "$(cat "$combined")" > "$log_file" 2>&1
+    exit_code=$?
+  fi
+  set -e
+  rm -f "$combined"
+
+  todo_after="$(file_hash "$TODO_FILE")"
+  done_after="$(file_hash "$DONE_FILE")"
+  archive_after="$(file_hash "$TODO_ARCHIVE_FILE")"
+
+  echo "exit_code=$exit_code" >> "$run_dir/meta.txt"
+  echo "finished=$(date +'%F %T')" >> "$run_dir/meta.txt"
+
+  no_tasks_detected=0
+  guidance_detected=0
+  if [[ $exit_code -eq 0 ]]; then
+    total_ok=$((total_ok + 1))
+    status="$MSG_RUN_DONE"
+    if tail -n 120 "$log_file" | grep -Eq "^[[:space:]]*${MSG_NO_TASKS_PATTERN}[[:space:]]*$"; then
+      status="$MSG_IDLE"
+      no_tasks_detected=1
+    elif tail -n 400 "$log_file" | grep -Eqi "need.*(decision|your decision)|how would you like to proceed|Potrzebuję decyzji"; then
+      status="$MSG_NEEDS_DECISION"
+      guidance_detected=1
+    elif [[ "$todo_before" != "$todo_after" || "$done_before" != "$done_after" || "$archive_before" != "$archive_after" ]]; then
+      status="$MSG_TASK_DONE"
+    fi
+    if [[ $no_tasks_detected -eq 1 ]]; then
+      echo "[$(date +'%F %T')] run #$run_count $MSG_NO_TASKS_WAIT ${IDLE_SLEEP_SECONDS}s $MSG_NO_TASKS_WAIT_SUFFIX"
+    elif [[ $guidance_detected -eq 1 ]]; then
+      echo "[$(date +'%F %T')] $MSG_DECISION_CONTINUE"
+    else
+      echo "[$(date +'%F %T')] $status"
+    fi
+    notify normal "Run #$run_count: $status"
+  else
+    total_fail=$((total_fail + 1))
+    echo "[$(date +'%F %T')] $MSG_ERROR: run #$run_count exit=$exit_code (log: $log_file)"
+    tail -n 40 "$log_file" || true
+    notify critical "Run #$run_count $MSG_FAILED (exit $exit_code)"
+  fi
+
+  if [[ "$RALPH_MODE" == "single" ]]; then
+    if [[ $no_tasks_detected -eq 1 || $guidance_detected -eq 1 ]]; then
+      [[ -f "$STOP_FILE" ]] && {
+        echo "Stop file detected."
+        exit 0
+      }
+      sleep_with_dots "$IDLE_SLEEP_SECONDS"
+      continue
+    fi
+    echo "[$(date +'%F %T')] $MSG_SINGLE_STOPPED"
+    exit "$exit_code"
+  fi
+
+  [[ -f "$STOP_FILE" ]] && {
+    echo "Stop file detected."
+    exit 0
+  }
+  restart_self_if_requested
+  if [[ $guidance_detected -eq 1 ]]; then
+    sleep 1
+  elif [[ $no_tasks_detected -eq 1 ]]; then
+    sleep_with_dots "$IDLE_SLEEP_SECONDS"
+  else
+    sleep "$SLEEP_SECONDS"
+  fi
+done
