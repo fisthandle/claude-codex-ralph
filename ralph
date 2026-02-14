@@ -51,7 +51,7 @@ case "$RALPH_LANG" in
     MSG_WT_LIST="Lista zastanych zmian:"
     MSG_WT_NONE="Lista zastanych zmian: (brak)"
     MSG_SHORT_TODO_LABEL="linie"
-    MSG_SHORT_TODO_WAIT="brak zadan, czekam"
+    MSG_SHORT_TODO_WAIT="czekam"
     MSG_HELP="Uzycie:
   ralph run            - uruchom petle agenta
   ralph restart <pid>  - przeladuj aktywny proces (po PID)
@@ -108,7 +108,7 @@ Zmienne srodowiskowe:
     MSG_WT_LIST="Existing changes:"
     MSG_WT_NONE="Existing changes: (none)"
     MSG_SHORT_TODO_LABEL="lines"
-    MSG_SHORT_TODO_WAIT="no tasks, waiting"
+    MSG_SHORT_TODO_WAIT="waiting"
     MSG_HELP="Usage:
   ralph run            - start agent loop
   ralph restart <pid>  - reload active process (by PID)
@@ -436,7 +436,7 @@ while true; do
   todo_lines="$(todo_line_count)"
   if [[ "$todo_lines" -lt "$TODO_MIN_LINES_FOR_MODEL" ]]; then
     push_pending_commits
-    echo "[$(date +'%F %T')] $MSG_SHORT_TODO_LABEL:$todo_lines, $MSG_SHORT_TODO_WAIT"
+    echo -n "[$(date +'%F %T')] $MSG_SHORT_TODO_LABEL:$todo_lines < $TODO_MIN_LINES_FOR_MODEL, $MSG_SHORT_TODO_WAIT "
     sleep_with_dots "$IDLE_SLEEP_SECONDS"
     continue
   fi

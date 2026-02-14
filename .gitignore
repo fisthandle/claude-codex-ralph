@@ -6,6 +6,10 @@ tasks/
 # Claude Code local state
 .claude/
 
+# Ignore claude-mem context files in subdirectories
+**/CLAUDE.md
+!/CLAUDE.md
+
 # Editor
 *.swp
 *~
