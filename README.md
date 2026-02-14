@@ -79,8 +79,9 @@ All configuration is via environment variables:
 | `MODEL` | `gpt-5.3-codex` | AI model name passed to codex |
 | `REASONING` | `medium` | Model reasoning effort |
 | `SLEEP_SECONDS` | `10` | Pause between runs (seconds) |
-| `IDLE_SLEEP_SECONDS` | `15` | Pause when no tasks found |
+| `IDLE_SLEEP_SECONDS` | `100` | Pause when no tasks found |
 | `ERROR_SLEEP_SECONDS` | `300` | Pause after a failed run |
+| `TODO_MIN_LINES_FOR_MODEL` | `10` | If `tasks/TODO.md` has fewer lines, skip model run and stay in idle polling mode |
 | `RALPH_HOME` | *(auto-detected)* | Ralph installation directory |
 | `RALPH_VERBOSE` | `0` | Set to `1` to show agent output live |
 | `RALPH_INLINE_CLAUDE` | `0` | Set to `1` to inline full `CLAUDE.md` files into each prompt |

@@ -41,8 +41,8 @@ case "$RALPH_LANG" in
     MSG_NO_TASKS_PATTERN='BRAK ZADA[ŃN]'
     MSG_UNKNOWN_CMD="Nieznana komenda:"
     MSG_IDLE_PAUSE="przerwa"
-    MSG_NO_TASKS_WAIT="zakonczony: brak otwartych taskow, czekam"
-    MSG_NO_TASKS_WAIT_SUFFIX="na nowe"
+    MSG_NO_TASKS_WAIT="brak nowych, czekam"
+    MSG_NO_TASKS_WAIT_SUFFIX=""
     MSG_DECISION_CONTINUE="agent poprosil o decyzje, kontynuuje automatycznie"
     MSG_FAILED="FAILED"
     MSG_WT_HEADER="# Kontekst Working Tree (zastany przed runem)"
@@ -50,6 +50,8 @@ case "$RALPH_LANG" in
     MSG_WT_SKIP="Nie pytaj o decyzje z powodu tych plikow; po prostu je ignoruj i kontynuuj."
     MSG_WT_LIST="Lista zastanych zmian:"
     MSG_WT_NONE="Lista zastanych zmian: (brak)"
+    MSG_SHORT_TODO_LABEL="linie"
+    MSG_SHORT_TODO_WAIT="brak zadan, czekam"
     MSG_HELP="Uzycie:
   ralph run            - uruchom petle agenta
   ralph restart <pid>  - przeladuj aktywny proces (po PID)
@@ -62,7 +64,9 @@ Zmienne srodowiskowe:
   MODEL         Model AI (domyslnie: gpt-5.3-codex)
   REASONING     Poziom rozumowania (domyslnie: medium)
   SLEEP_SECONDS Przerwa miedzy runami (domyslnie: 10)
+  IDLE_SLEEP_SECONDS Przerwa przy braku zadan (domyslnie: 100)
   ERROR_SLEEP_SECONDS Przerwa po bledzie runa (domyslnie: 300)
+  TODO_MIN_LINES_FOR_MODEL Minimalna liczba linii TODO.md do uruchomienia modelu (domyslnie: 10)
   RALPH_INLINE_CLAUDE    1 = dolacz cala tresc CLAUDE.md do promptu (domyslnie: 0)
   RALPH_WT_MAX_LINES     Limit linii git status dopinanych do promptu (domyslnie: 40)
   RALPH_GIT_SYNC_ON_START 1 = git pull --rebase raz na start sesji (domyslnie: 1)
@@ -103,6 +107,8 @@ Zmienne srodowiskowe:
     MSG_WT_SKIP="Do not ask for decisions about these files; just ignore them and continue."
     MSG_WT_LIST="Existing changes:"
     MSG_WT_NONE="Existing changes: (none)"
+    MSG_SHORT_TODO_LABEL="lines"
+    MSG_SHORT_TODO_WAIT="no tasks, waiting"
     MSG_HELP="Usage:
   ralph run            - start agent loop
   ralph restart <pid>  - reload active process (by PID)
@@ -115,7 +121,9 @@ Environment:
   MODEL         AI model (default: gpt-5.3-codex)
   REASONING     Reasoning effort (default: medium)
   SLEEP_SECONDS Sleep between runs (default: 10)
+  IDLE_SLEEP_SECONDS Sleep while idle (default: 100)
   ERROR_SLEEP_SECONDS Sleep after failed run (default: 300)
+  TODO_MIN_LINES_FOR_MODEL Minimum TODO.md lines required to run model (default: 10)
   RALPH_INLINE_CLAUDE    1 = inline full CLAUDE.md into prompt (default: 0)
   RALPH_WT_MAX_LINES     Max git status lines appended to prompt (default: 40)
   RALPH_GIT_SYNC_ON_START 1 = git pull --rebase once at session start (default: 1)
@@ -145,8 +153,9 @@ PID_FILE="$LOG_DIR/ralph.pid"
 MODEL="${MODEL:-gpt-5.3-codex}"
 REASONING="${REASONING:-medium}"
 SLEEP_SECONDS="${SLEEP_SECONDS:-10}"
-IDLE_SLEEP_SECONDS="${IDLE_SLEEP_SECONDS:-15}"
+IDLE_SLEEP_SECONDS="${IDLE_SLEEP_SECONDS:-100}"
 ERROR_SLEEP_SECONDS="${ERROR_SLEEP_SECONDS:-300}"
+TODO_MIN_LINES_FOR_MODEL="${TODO_MIN_LINES_FOR_MODEL:-10}"
 RALPH_VERBOSE="${RALPH_VERBOSE:-0}"
 RALPH_MODE="${RALPH_MODE:-loop}"
 BASE_PROMPT_FILE="${BASE_PROMPT_FILE:-$RALPH_HOME/prompts/${RALPH_LANG}.md}"
@@ -157,6 +166,9 @@ RALPH_GIT_PUSH_ON_IDLE="${RALPH_GIT_PUSH_ON_IDLE:-1}"
 
 if [[ ! "$RALPH_WT_MAX_LINES" =~ ^[0-9]+$ ]]; then
   RALPH_WT_MAX_LINES="40"
+fi
+if [[ ! "$TODO_MIN_LINES_FOR_MODEL" =~ ^[0-9]+$ ]]; then
+  TODO_MIN_LINES_FOR_MODEL="10"
 fi
 
 COMMAND="${1:-help}"
@@ -337,6 +349,21 @@ sleep_with_dots() {
   echo
 }
 
+todo_line_count() {
+  if [[ ! -f "$TODO_FILE" ]]; then
+    echo "0"
+    return
+  fi
+
+  local lines
+  lines="$(wc -l < "$TODO_FILE" | tr -d '[:space:]')"
+  if [[ "$lines" =~ ^[0-9]+$ ]]; then
+    echo "$lines"
+  else
+    echo "0"
+  fi
+}
+
 trap 'echo "$MSG_STOPPED"; notify normal "$MSG_STOPPED"; exit 130' INT TERM
 
 run_count=0
@@ -405,6 +432,14 @@ while true; do
     echo "Stop file detected."
     exit 0
   }
+
+  todo_lines="$(todo_line_count)"
+  if [[ "$todo_lines" -lt "$TODO_MIN_LINES_FOR_MODEL" ]]; then
+    push_pending_commits
+    echo "[$(date +'%F %T')] $MSG_SHORT_TODO_LABEL:$todo_lines, $MSG_SHORT_TODO_WAIT"
+    sleep_with_dots "$IDLE_SLEEP_SECONDS"
+    continue
+  fi
 
   run_count=$((run_count + 1))
   ts="$(date +%Y%m%d-%H%M%S)"
