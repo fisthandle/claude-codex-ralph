@@ -462,7 +462,7 @@ infra_failure_signature() {
   [[ -f "$log_file" ]] || return 1
   recent_log="$(tail -n 50 "$log_file" 2>/dev/null || true)"
   [[ -n "$recent_log" ]] || return 1
-  match="$(grep -Eim1o '\bETIMEDOUT\b|\bECONNRESET\b|\bEAI_AGAIN\b|\bENOTFOUND\b|connection refused|temporarily unavailable|request timed out|operation timed out|deadline exceeded|unable to access|could not resolve host|certificate verify failed|tls handshake|ssl routines|http/[0-9.]+[[:space:]]+50[0-4]\b|status[[:space:]:=]+50[0-4]\b|http/[0-9.]+[[:space:]]+429\b|status[[:space:]:=]+429\b|service unavailable|too many requests|rate limit exceeded' <<< "$recent_log" || true)"
+  match="$(grep -Eio -m 1 '\bETIMEDOUT\b|\bECONNRESET\b|\bEAI_AGAIN\b|\bENOTFOUND\b|connection refused|temporarily unavailable|request timed out|operation timed out|deadline exceeded|unable to access|could not resolve host|certificate verify failed|tls handshake|ssl routines|http/[0-9.]+[[:space:]]+50[0-4]\b|status[[:space:]:=]+50[0-4]\b|http/[0-9.]+[[:space:]]+429\b|status[[:space:]:=]+429\b|service unavailable|too many requests|rate limit exceeded' <<< "$recent_log" || true)"
   [[ -n "$match" ]] || return 1
   printf '%s\n' "$match" | tr '[:upper:]' '[:lower:]'
 }
