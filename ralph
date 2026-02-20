@@ -97,6 +97,7 @@ Zmienne srodowiskowe:
   MAX_RUNS_PER_WINDOW    Maks runow w oknie (domyslnie: 30)
   RALPH_TODO_MAINTENANCE_MODE Tryb maintenance TODO: off|idle|periodic (domyslnie: idle)
   RALPH_TODO_MAINTENANCE_EVERY Co ile runow maintenance dla trybu periodic (domyslnie: 10)
+  RALPH_TODO_MAINTENANCE_RANDOM_DENOM Losowy maintenance w idle: 1/N na udany run (domyslnie: 8, 0=wylaczone)
   RALPH_FAIL_ON_TODO_DUPLICATES 1 = fail-fast run przy duplikatach sekcji TODO (domyslnie: 0)
   RALPH_HOME    Katalog instalacji Ralph (auto-wykrywany)"
     ;;
@@ -166,6 +167,7 @@ Environment:
   MAX_RUNS_PER_WINDOW    Max runs allowed per budget window (default: 30)
   RALPH_TODO_MAINTENANCE_MODE TODO maintenance mode: off|idle|periodic (default: idle)
   RALPH_TODO_MAINTENANCE_EVERY Run interval for maintenance in periodic mode (default: 10)
+  RALPH_TODO_MAINTENANCE_RANDOM_DENOM Random maintenance in idle: 1/N per successful run (default: 8, 0=disabled)
   RALPH_FAIL_ON_TODO_DUPLICATES 1 = fail-fast run when duplicate TODO sections are detected (default: 0)
   RALPH_HOME    Ralph installation directory (auto-detected)"
     ;;
@@ -268,6 +270,7 @@ RUN_BUDGET_WINDOW_SECONDS="${RUN_BUDGET_WINDOW_SECONDS:-3600}"
 MAX_RUNS_PER_WINDOW="${MAX_RUNS_PER_WINDOW:-30}"
 RALPH_TODO_MAINTENANCE_MODE="${RALPH_TODO_MAINTENANCE_MODE:-idle}"
 RALPH_TODO_MAINTENANCE_EVERY="${RALPH_TODO_MAINTENANCE_EVERY:-10}"
+RALPH_TODO_MAINTENANCE_RANDOM_DENOM="${RALPH_TODO_MAINTENANCE_RANDOM_DENOM:-8}"
 RALPH_FAIL_ON_TODO_DUPLICATES="${RALPH_FAIL_ON_TODO_DUPLICATES:-0}"
 
 if [[ ! "$RALPH_WT_MAX_LINES" =~ ^[0-9]+$ ]]; then
@@ -300,6 +303,9 @@ if [[ ! "$MAX_RUNS_PER_WINDOW" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$RALPH_TODO_MAINTENANCE_EVERY" =~ ^[0-9]+$ ]] || [[ "$RALPH_TODO_MAINTENANCE_EVERY" -lt 1 ]]; then
   RALPH_TODO_MAINTENANCE_EVERY="10"
+fi
+if [[ ! "$RALPH_TODO_MAINTENANCE_RANDOM_DENOM" =~ ^[0-9]+$ ]]; then
+  RALPH_TODO_MAINTENANCE_RANDOM_DENOM="8"
 fi
 if [[ "$RALPH_FAIL_ON_TODO_DUPLICATES" != "0" && "$RALPH_FAIL_ON_TODO_DUPLICATES" != "1" ]]; then
   echo "Invalid RALPH_FAIL_ON_TODO_DUPLICATES: $RALPH_FAIL_ON_TODO_DUPLICATES (allowed: 0, 1)" >&2
@@ -1085,6 +1091,7 @@ while true; do
   maintenance_ran=0
   maintenance_seconds=0
   maintenance_sections_moved=0
+  maintenance_random_hit=0
 
   if [[ "$RALPH_TODO_MAINTENANCE_MODE" == "periodic" ]] && (( run_count % RALPH_TODO_MAINTENANCE_EVERY == 0 )); then
     maintenance_call_started_epoch="$(date +%s)"
@@ -1306,10 +1313,6 @@ while true; do
     test_seconds="unknown"
   fi
 
-  todo_after="$(file_hash "$TODO_FILE")"
-  done_after="$(file_hash "$DONE_FILE")"
-  archive_after="$(file_hash "$TODO_ARCHIVE_FILE")"
-
   stop_reason="none"
   stopped_by="none"
   if [[ "$stuck_timeout_hit" -eq 1 ]]; then
@@ -1341,7 +1344,27 @@ while true; do
     elif tail -n 400 "$log_file" | grep -Eqi "need.*(decision|your decision)|how would you like to proceed|Potrzebuję decyzji"; then
       guidance_detected=1
     fi
+
+    if [[ "$RALPH_TODO_MAINTENANCE_MODE" == "idle" ]] && [[ "$maintenance_ran" -eq 0 ]] && [[ "$RALPH_TODO_MAINTENANCE_RANDOM_DENOM" -gt 0 ]]; then
+      if (( RANDOM % RALPH_TODO_MAINTENANCE_RANDOM_DENOM == 0 )); then
+        maintenance_random_hit=1
+        maintenance_call_started_epoch="$(date +%s)"
+        if ! run_todo_maintenance "$maintenance_log_file"; then
+          echo "[$(date +'%F %T')] warning: TODO maintenance failed (mode=idle-random)" >> "$log_file"
+        fi
+        maintenance_call_finished_epoch="$(date +%s)"
+        maintenance_call_seconds=$((maintenance_call_finished_epoch - maintenance_call_started_epoch))
+        if (( maintenance_call_seconds < 0 )); then
+          maintenance_call_seconds=0
+        fi
+        phase_maintenance_seconds=$((phase_maintenance_seconds + maintenance_call_seconds))
+      fi
+    fi
   fi
+
+  todo_after="$(file_hash "$TODO_FILE")"
+  done_after="$(file_hash "$DONE_FILE")"
+  archive_after="$(file_hash "$TODO_ARCHIVE_FILE")"
 
   run_finished_epoch="$(date +%s)"
   run_duration_seconds=$((run_finished_epoch - run_started_epoch))
@@ -1402,6 +1425,8 @@ while true; do
   echo "duration_seconds=$run_duration_seconds" >> "$run_dir/meta.txt"
   echo "finished=$(date +'%F %T')" >> "$run_dir/meta.txt"
   echo "maintenance_mode=$RALPH_TODO_MAINTENANCE_MODE" >> "$run_dir/meta.txt"
+  echo "maintenance_random_denom=$RALPH_TODO_MAINTENANCE_RANDOM_DENOM" >> "$run_dir/meta.txt"
+  echo "maintenance_random_hit=$maintenance_random_hit" >> "$run_dir/meta.txt"
   echo "maintenance_ran=$maintenance_ran" >> "$run_dir/meta.txt"
   echo "maintenance_seconds=$maintenance_seconds" >> "$run_dir/meta.txt"
   echo "maintenance_sections_moved=$maintenance_sections_moved" >> "$run_dir/meta.txt"
