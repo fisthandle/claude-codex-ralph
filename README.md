@@ -82,7 +82,6 @@ cp -r ralph/skills/php-gatekeeper ~/.claude/skills/php-gatekeeper
 cd your-project-repo
 ralph run              # start the loop
 ralph stop             # toggle stop file (set/remove tasks/agent.stop)
-ralph safe-stop        # toggle safe-stop (set/remove tasks/agent.safe-stop)
 ralph restart <pid>    # reload a running process
 ralph help             # show help
 ```
@@ -104,7 +103,8 @@ All configuration is via environment variables:
 | `RALPH_HOME` | *(auto-detected)* | Ralph installation directory |
 | `RALPH_VERBOSE` | `0` | Set to `1` to show agent output live |
 | `RALPH_INLINE_CLAUDE` | `0` | Set to `1` to inline full `CLAUDE.md` files into each prompt |
-| `RALPH_WT_MAX_LINES` | `40` | Max `git status --short` lines appended to each prompt |
+| `RALPH_WT_MAX_LINES` | `0` | Max `git status --short` lines appended to each prompt (`0` disables this block) |
+| `RALPH_REPORT_RUNS` | `0` | Set to `1` to generate daily report JSON after each run |
 | `RALPH_GIT_SYNC_ON_START` | `1` | Set to `0` to skip one-time `git pull --rebase` at session start |
 | `RALPH_GIT_PUSH_ON_IDLE` | `1` | Set to `0` to disable auto-push of pending commits on idle/stop |
 | `STUCK_TIMEOUT_SECONDS` | `1800` | Timeout for a single agent attempt (`timeout` command) |
@@ -157,7 +157,8 @@ Runtime observability:
 - `tasks/logs/runs/*/meta.txt` includes:
   - `reasoning_requested`, `reasoning_selected`, `reasoning_reason`,
   - `failure_class`, `retry_count`, `stuck_timeout_hit`,
-  - `policy_violation`, `policy_reason`, `protocol_violation`, `protocol_reason`,
+  - `policy_violation`, `policy_reason`,
+  - `gitignore_runtime_ok`, `gitignore_runtime_missing`,
   - `todo_duplicates_count`, `todo_duplicates_warning`, `todo_duplicates_fail_on_detect`,
   - `context_hash`, `prompt_hash`, `prompt_drift`, `drift_reason`,
   - `phase_prepare_seconds`, `phase_agent_seconds`, `phase_policy_seconds`, `phase_maintenance_seconds`, `phase_finalize_seconds`,
@@ -221,8 +222,6 @@ See details: `docs/benchmarks.md`.
 | `benchmarks/*` | Eval harness and baseline gate |
 | `scripts/check_todo_duplicates.sh` | Detect duplicate open TODO sections by normalized title+content |
 | `scripts/report_runs.sh` | Aggregate run telemetry into daily JSON report |
-| `scripts/validate_commit_policy.sh` | Post-run commit policy check |
-| `scripts/validate_run_protocol.sh` | Post-run protocol check (`napkin-first`, `spawn_agent` announcement) |
 | `skills/todo/SKILL.md` | Claude Code skill for writing structured tasks |
 | `skills/php-*/SKILL.md` | PHP implementation workflow skills |
 
@@ -272,7 +271,6 @@ tasks/
   DONE.md              # completion log
   TODO_ARCHIVE.md      # archived DONE sections
   agent.stop           # touch to stop the loop
-  agent.safe-stop      # touch to request safe-stop
   agent.restart        # used by ralph restart
   logs/
     ralph.pid          # PID lock file
@@ -284,9 +282,7 @@ tasks/
       20260212-143000-1/
         stdout.log     # agent output
         prompt.txt     # prompt sent to agent
-        policy_check.log # commit policy diagnostics
-        protocol_check.log # protocol diagnostics (`napkin-first`, subagent announcements)
-        meta.txt       # run metadata (reasoning, failure class, policy/protocol status, drift, retries, test_seconds, duration_seconds)
+        meta.txt       # run metadata (reasoning, failure class, duplicate/gitignore checks, drift, retries, test_seconds, duration_seconds)
 ```
 
 ## License

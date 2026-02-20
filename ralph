@@ -37,8 +37,6 @@ case "$RALPH_LANG" in
     MSG_BAD_PID="blad: nieprawidlowy PID:"
     MSG_STOP_REMOVED="usunieto stop, mozesz ponownie ustawic powtarzajac komende"
     MSG_STOP_SET="ustawiono stop"
-    MSG_SAFE_STOP_REMOVED="usunieto safe-stop"
-    MSG_SAFE_STOP_SET="ustawiono safe-stop"
     MSG_RESTART_PLANNED="restart zaplanowany: przeladuje sie po biezacym runie"
     MSG_RESTART_WRONG_PID="blad: aktywny PID dla tego repo to"
     MSG_RESTART_NO_PROCESS="blad: brak aktywnego procesu ralph run w tym repo"
@@ -74,7 +72,6 @@ case "$RALPH_LANG" in
   ralph run            - uruchom petle agenta
   ralph restart <pid>  - przeladuj aktywny proces (po PID)
   ralph stop           - przelacz stop (ustaw/usun tasks/agent.stop)
-  ralph safe-stop      - przelacz safe-stop (ustaw/usun tasks/agent.safe-stop)
   ralph completion bash - wypisz skrypt autouzupelniania Bash
   ralph help           - pokaz to menu
 
@@ -88,7 +85,8 @@ Zmienne srodowiskowe:
   ERROR_SLEEP_SECONDS Przerwa po bledzie runa (domyslnie: 300)
   TODO_MIN_LINES_FOR_MODEL Minimalna liczba linii TODO.md do uruchomienia modelu (domyslnie: 10)
   RALPH_INLINE_CLAUDE    1 = dolacz cala tresc CLAUDE.md do promptu (domyslnie: 0)
-  RALPH_WT_MAX_LINES     Limit linii git status dopinanych do promptu (domyslnie: 40)
+  RALPH_WT_MAX_LINES     Limit linii git status dopinanych do promptu (domyslnie: 0 = wylaczone)
+  RALPH_REPORT_RUNS      1 = generuj dzienny raport po kazdym runie (domyslnie: 0)
   RALPH_GIT_SYNC_ON_START 1 = git pull --rebase raz na start sesji (domyslnie: 1)
   RALPH_GIT_PUSH_ON_IDLE  1 = push zaleglych commitow przy idle/stop (domyslnie: 1)
   STUCK_TIMEOUT_SECONDS  Timeout pojedynczej proby agenta (domyslnie: 1800)
@@ -108,8 +106,6 @@ Zmienne srodowiskowe:
     MSG_BAD_PID="error: invalid PID:"
     MSG_STOP_REMOVED="stop removed, repeat command to set again"
     MSG_STOP_SET="stop set"
-    MSG_SAFE_STOP_REMOVED="safe-stop removed"
-    MSG_SAFE_STOP_SET="safe-stop set"
     MSG_RESTART_PLANNED="restart scheduled: will reload after current run"
     MSG_RESTART_WRONG_PID="error: active PID for this repo is"
     MSG_RESTART_NO_PROCESS="error: no active ralph run process in this repo"
@@ -145,7 +141,6 @@ Zmienne srodowiskowe:
   ralph run            - start agent loop
   ralph restart <pid>  - reload active process (by PID)
   ralph stop           - toggle stop (set/remove tasks/agent.stop)
-  ralph safe-stop      - toggle safe-stop (set/remove tasks/agent.safe-stop)
   ralph completion bash - print Bash completion script
   ralph help           - show this menu
 
@@ -159,7 +154,8 @@ Environment:
   ERROR_SLEEP_SECONDS Sleep after failed run (default: 300)
   TODO_MIN_LINES_FOR_MODEL Minimum TODO.md lines required to run model (default: 10)
   RALPH_INLINE_CLAUDE    1 = inline full CLAUDE.md into prompt (default: 0)
-  RALPH_WT_MAX_LINES     Max git status lines appended to prompt (default: 40)
+  RALPH_WT_MAX_LINES     Max git status lines appended to prompt (default: 0 = disabled)
+  RALPH_REPORT_RUNS      1 = generate daily report after each run (default: 0)
   RALPH_GIT_SYNC_ON_START 1 = git pull --rebase once at session start (default: 1)
   RALPH_GIT_PUSH_ON_IDLE  1 = push pending commits on idle/stop (default: 1)
   STUCK_TIMEOUT_SECONDS  Timeout for a single agent attempt (default: 1800)
@@ -193,7 +189,7 @@ _ralph_completion() {
   command="${COMP_WORDS[1]}"
 
   if [[ "$COMP_CWORD" -eq 1 ]]; then
-    COMPREPLY=( $(compgen -W "run restart stop safe-stop help completion" -- "$cur") )
+    COMPREPLY=( $(compgen -W "run restart stop help completion" -- "$cur") )
     return 0
   fi
 
@@ -208,11 +204,11 @@ _ralph_completion() {
     return 0
   fi
 
-  if [[ "$command" == "help" || "$command" == "run" || "$command" == "stop" || "$command" == "safe-stop" ]]; then
+  if [[ "$command" == "help" || "$command" == "run" || "$command" == "stop" ]]; then
     return 0
   fi
 
-  COMPREPLY=( $(compgen -W "run restart stop safe-stop help completion" -- "$cur") )
+  COMPREPLY=( $(compgen -W "run restart stop help completion" -- "$cur") )
 }
 
 complete -o default -F _ralph_completion ralph
@@ -243,7 +239,6 @@ TODO_FILE="$TASKS_DIR/TODO.md"
 DONE_FILE="$TASKS_DIR/DONE.md"
 TODO_ARCHIVE_FILE="$TASKS_DIR/TODO_ARCHIVE.md"
 STOP_FILE="$TASKS_DIR/agent.stop"
-SAFE_STOP_FILE="$TASKS_DIR/agent.safe-stop"
 RESTART_FILE="$TASKS_DIR/agent.restart"
 LOG_DIR="$TASKS_DIR/logs"
 RUNS_DIR="$LOG_DIR/runs"
@@ -261,7 +256,8 @@ RALPH_VERBOSE="${RALPH_VERBOSE:-0}"
 RALPH_MODE="${RALPH_MODE:-loop}"
 BASE_PROMPT_FILE="${BASE_PROMPT_FILE:-$RALPH_HOME/prompts/${RALPH_LANG}.md}"
 RALPH_INLINE_CLAUDE="${RALPH_INLINE_CLAUDE:-0}"
-RALPH_WT_MAX_LINES="${RALPH_WT_MAX_LINES:-40}"
+RALPH_WT_MAX_LINES="${RALPH_WT_MAX_LINES:-0}"
+RALPH_REPORT_RUNS="${RALPH_REPORT_RUNS:-0}"
 RALPH_GIT_SYNC_ON_START="${RALPH_GIT_SYNC_ON_START:-1}"
 RALPH_GIT_PUSH_ON_IDLE="${RALPH_GIT_PUSH_ON_IDLE:-1}"
 STUCK_TIMEOUT_SECONDS="${STUCK_TIMEOUT_SECONDS:-1800}"
@@ -275,7 +271,11 @@ RALPH_TODO_MAINTENANCE_EVERY="${RALPH_TODO_MAINTENANCE_EVERY:-10}"
 RALPH_FAIL_ON_TODO_DUPLICATES="${RALPH_FAIL_ON_TODO_DUPLICATES:-0}"
 
 if [[ ! "$RALPH_WT_MAX_LINES" =~ ^[0-9]+$ ]]; then
-  RALPH_WT_MAX_LINES="40"
+  RALPH_WT_MAX_LINES="0"
+fi
+if [[ "$RALPH_REPORT_RUNS" != "0" && "$RALPH_REPORT_RUNS" != "1" ]]; then
+  echo "Invalid RALPH_REPORT_RUNS: $RALPH_REPORT_RUNS (allowed: 0, 1)" >&2
+  exit 2
 fi
 if [[ ! "$TODO_MIN_LINES_FOR_MODEL" =~ ^[0-9]+$ ]]; then
   TODO_MIN_LINES_FOR_MODEL="10"
@@ -366,24 +366,13 @@ case "$COMMAND" in
     fi
     exit 0
     ;;
-  safe-stop)
-    if [[ -f "$SAFE_STOP_FILE" ]]; then
-      rm -f "$SAFE_STOP_FILE"
-      echo "$MSG_SAFE_STOP_REMOVED"
-    else
-      mkdir -p "$TASKS_DIR"
-      touch "$SAFE_STOP_FILE"
-      echo "$MSG_SAFE_STOP_SET: $SAFE_STOP_FILE"
-    fi
-    exit 0
-    ;;
   help|--help|-h)
     echo "$MSG_HELP"
     exit 0
     ;;
   *)
     echo "$MSG_UNKNOWN_CMD $COMMAND"
-    echo "Usage: ralph [run|restart <pid>|stop|safe-stop|completion bash|help]"
+    echo "Usage: ralph [run|restart <pid>|stop|completion bash|help]"
     exit 2
     ;;
 esac
@@ -419,8 +408,6 @@ HAS_TIMEOUT=0
 if command -v timeout >/dev/null 2>&1; then
   HAS_TIMEOUT=1
 fi
-COMMIT_POLICY_SCRIPT="$RALPH_HOME/scripts/validate_commit_policy.sh"
-RUN_PROTOCOL_SCRIPT="$RALPH_HOME/scripts/validate_run_protocol.sh"
 REPORT_RUNS_SCRIPT="$RALPH_HOME/scripts/report_runs.sh"
 ARCHIVE_TODO_SCRIPT="$RALPH_HOME/archive_todo.sh"
 TODO_DUPLICATE_CHECK_SCRIPT="$RALPH_HOME/scripts/check_todo_duplicates.sh"
@@ -768,6 +755,37 @@ load_run_budget_state() {
   ' "$RUN_BUDGET_STATE_FILE" || true
 }
 
+RUNTIME_GITIGNORE_OK=1
+RUNTIME_GITIGNORE_MISSING="none"
+check_runtime_gitignore() {
+  local -a probe_paths=(
+    "tasks/agent.stop"
+    "tasks/logs/ralph.pid"
+    ".claude/napkin.md"
+    "runtime.pid"
+    "runtime.log"
+  )
+  local -a missing=()
+  local path
+
+  for path in "${probe_paths[@]}"; do
+    if ! git -C "$ROOT_DIR" check-ignore -q --no-index "$path" 2>/dev/null; then
+      missing+=("$path")
+    fi
+  done
+
+  if [[ "${#missing[@]}" -eq 0 ]]; then
+    RUNTIME_GITIGNORE_OK=1
+    RUNTIME_GITIGNORE_MISSING="none"
+    return 0
+  fi
+
+  RUNTIME_GITIGNORE_OK=0
+  RUNTIME_GITIGNORE_MISSING="$(IFS=,; echo "${missing[*]}")"
+  echo "[$(date +'%F %T')] warning: .gitignore may miss runtime paths: $RUNTIME_GITIGNORE_MISSING"
+  return 1
+}
+
 RUN_BUDGET_USED=0
 enforce_run_budget() {
   local now
@@ -1032,15 +1050,11 @@ push_pending_commits() {
 }
 
 sync_pull_once
+check_runtime_gitignore || true
 
 while true; do
   restart_self_if_requested
   restart_self_if_script_changed
-  [[ -f "$SAFE_STOP_FILE" ]] && {
-    push_pending_commits
-    echo "Safe-stop file detected."
-    exit 0
-  }
   [[ -f "$STOP_FILE" ]] && {
     push_pending_commits
     echo "Stop file detected."
@@ -1127,28 +1141,30 @@ while true; do
     } >> "$combined"
   fi
 
-  baseline_all_status="$(git -C "$ROOT_DIR" status --short || true)"
-  baseline_status="$(printf '%s\n' "$baseline_all_status" | head -n "$RALPH_WT_MAX_LINES" || true)"
-  baseline_count=0
-  if [[ -n "$baseline_all_status" ]]; then
-    baseline_count="$(printf '%s\n' "$baseline_all_status" | wc -l | tr -d ' ')"
-  fi
-  {
-    echo
-    echo "$MSG_WT_HEADER"
-    echo "$MSG_WT_INFO"
-    echo "$MSG_WT_SKIP"
-    if [[ -n "$baseline_status" ]]; then
-      echo "$MSG_WT_LIST"
-      printf '%s\n' "$baseline_status"
-      if [[ "$baseline_count" -gt "$RALPH_WT_MAX_LINES" ]]; then
-        echo "... (+$((baseline_count - RALPH_WT_MAX_LINES)) more)"
-      fi
-    else
-      echo "$MSG_WT_NONE"
+  if [[ "$RALPH_WT_MAX_LINES" -gt 0 ]]; then
+    baseline_all_status="$(git -C "$ROOT_DIR" status --short || true)"
+    baseline_status="$(printf '%s\n' "$baseline_all_status" | head -n "$RALPH_WT_MAX_LINES" || true)"
+    baseline_count=0
+    if [[ -n "$baseline_all_status" ]]; then
+      baseline_count="$(printf '%s\n' "$baseline_all_status" | wc -l | tr -d ' ')"
     fi
-    echo
-  } >> "$combined"
+    {
+      echo
+      echo "$MSG_WT_HEADER"
+      echo "$MSG_WT_INFO"
+      echo "$MSG_WT_SKIP"
+      if [[ -n "$baseline_status" ]]; then
+        echo "$MSG_WT_LIST"
+        printf '%s\n' "$baseline_status"
+        if [[ "$baseline_count" -gt "$RALPH_WT_MAX_LINES" ]]; then
+          echo "... (+$((baseline_count - RALPH_WT_MAX_LINES)) more)"
+        fi
+      else
+        echo "$MSG_WT_NONE"
+      fi
+      echo
+    } >> "$combined"
+  fi
   cat "$BASE_PROMPT_FILE" >> "$combined"
   prompt_hash="$(file_hash "$combined")"
   previous_context_hash="$(previous_run_meta_value "context_hash" "$run_dir" || true)"
@@ -1192,7 +1208,6 @@ while true; do
   todo_before="$(file_hash "$TODO_FILE")"
   done_before="$(file_hash "$DONE_FILE")"
   archive_before="$(file_hash "$TODO_ARCHIVE_FILE")"
-  head_before="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
 
   : > "$log_file"
   attempt=0
@@ -1201,8 +1216,7 @@ while true; do
   failure_class="none"
   infra_sig="none"
   policy_violation=0
-  protocol_violation=0
-  protocol_reason="none"
+  policy_reason="none"
   todo_duplicates_count=0
   todo_duplicates_warning=0
   last_attempt_log=""
@@ -1278,31 +1292,6 @@ while true; do
   phase_policy_start_epoch="$phase_agent_end_epoch"
   rm -f "$combined"
 
-  head_after="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
-  policy_reason="none"
-  if [[ -x "$COMMIT_POLICY_SCRIPT" ]]; then
-    if ! "$COMMIT_POLICY_SCRIPT" "$ROOT_DIR" "$head_before" "$head_after" > "$run_dir/policy_check.log" 2>&1; then
-      policy_violation=1
-      policy_reason="$(tail -n 1 "$run_dir/policy_check.log" | tr -d '\r' || true)"
-      [[ -z "$policy_reason" ]] && policy_reason="policy_check_failed"
-      touch "$SAFE_STOP_FILE"
-    fi
-  else
-    policy_reason="script_unavailable"
-  fi
-
-  if [[ -x "$RUN_PROTOCOL_SCRIPT" ]]; then
-    if ! "$RUN_PROTOCOL_SCRIPT" "$log_file" "$ROOT_DIR" > "$run_dir/protocol_check.log" 2>&1; then
-      protocol_violation=1
-      protocol_reason="$(tail -n 1 "$run_dir/protocol_check.log" | tr -d '\r' || true)"
-      [[ -z "$protocol_reason" ]] && protocol_reason="protocol_violation: protocol_check_failed"
-      policy_violation=1
-      policy_reason="$protocol_reason"
-      touch "$SAFE_STOP_FILE"
-    fi
-  else
-    protocol_reason="script_unavailable"
-  fi
   phase_policy_end_epoch="$(date +%s)"
   phase_policy_seconds=$((phase_policy_end_epoch - phase_policy_start_epoch))
   if (( phase_policy_seconds < 0 )); then
@@ -1334,13 +1323,10 @@ while true; do
   if [[ "$stuck_timeout_hit" -eq 1 ]]; then
     stop_reason="stuck_timeout"
     stopped_by="watchdog"
-    touch "$SAFE_STOP_FILE"
+    touch "$STOP_FILE"
   elif [[ "$policy_violation" -eq 1 ]]; then
     stop_reason="policy_violation"
     stopped_by="watchdog"
-  elif [[ -f "$SAFE_STOP_FILE" ]]; then
-    stop_reason="safe_stop"
-    stopped_by="operator"
   fi
 
   no_tasks_detected=0
@@ -1408,8 +1394,8 @@ while true; do
   echo "infra_failure_signature=$infra_sig" >> "$run_dir/meta.txt"
   echo "policy_violation=$policy_violation" >> "$run_dir/meta.txt"
   echo "policy_reason=$policy_reason" >> "$run_dir/meta.txt"
-  echo "protocol_violation=$protocol_violation" >> "$run_dir/meta.txt"
-  echo "protocol_reason=$protocol_reason" >> "$run_dir/meta.txt"
+  echo "gitignore_runtime_ok=$RUNTIME_GITIGNORE_OK" >> "$run_dir/meta.txt"
+  echo "gitignore_runtime_missing=$RUNTIME_GITIGNORE_MISSING" >> "$run_dir/meta.txt"
   echo "todo_duplicates_count=$todo_duplicates_count" >> "$run_dir/meta.txt"
   echo "todo_duplicates_warning=$todo_duplicates_warning" >> "$run_dir/meta.txt"
   echo "todo_duplicates_fail_on_detect=$RALPH_FAIL_ON_TODO_DUPLICATES" >> "$run_dir/meta.txt"
@@ -1428,7 +1414,7 @@ while true; do
   echo "maintenance_ran=$maintenance_ran" >> "$run_dir/meta.txt"
   echo "maintenance_seconds=$maintenance_seconds" >> "$run_dir/meta.txt"
   echo "maintenance_sections_moved=$maintenance_sections_moved" >> "$run_dir/meta.txt"
-  if [[ -x "$REPORT_RUNS_SCRIPT" ]]; then
+  if [[ "$RALPH_REPORT_RUNS" == "1" && -x "$REPORT_RUNS_SCRIPT" ]]; then
     "$REPORT_RUNS_SCRIPT" --date "$(date +%F)" >/dev/null 2>&1 || true
   fi
 
@@ -1437,11 +1423,6 @@ while true; do
       [[ -f "$STOP_FILE" ]] && {
         push_pending_commits
         echo "Stop file detected."
-        exit 0
-      }
-      [[ -f "$SAFE_STOP_FILE" ]] && {
-        push_pending_commits
-        echo "Safe-stop file detected."
         exit 0
       }
       if [[ $no_tasks_detected -eq 1 ]]; then
@@ -1455,11 +1436,6 @@ while true; do
     exit "$exit_code"
   fi
 
-  [[ -f "$SAFE_STOP_FILE" ]] && {
-    push_pending_commits
-    echo "Safe-stop file detected."
-    exit 0
-  }
   [[ -f "$STOP_FILE" ]] && {
     push_pending_commits
     echo "Stop file detected."
