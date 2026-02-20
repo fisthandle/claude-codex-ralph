@@ -423,6 +423,32 @@ sleep_with_dots() {
   echo
 }
 
+format_duration_compact() {
+  local total_seconds="$1"
+  local hours=0
+  local minutes=0
+  local seconds=0
+  local out=""
+
+  if [[ ! "$total_seconds" =~ ^[0-9]+$ ]]; then
+    total_seconds=0
+  fi
+
+  hours=$((total_seconds / 3600))
+  minutes=$(((total_seconds % 3600) / 60))
+  seconds=$((total_seconds % 60))
+
+  if [[ "$hours" -gt 0 ]]; then
+    out="${hours}h"
+  fi
+  if [[ "$minutes" -gt 0 ]]; then
+    out="${out}${minutes}m"
+  fi
+  out="${out}${seconds}s"
+
+  printf '%s\n' "$out"
+}
+
 todo_line_count() {
   if [[ ! -f "$TODO_FILE" ]]; then
     echo "0"
@@ -1057,7 +1083,9 @@ while true; do
   echo "stop_reason=$stop_reason" >> "$run_dir/meta.txt"
   echo "stopped_by=$stopped_by" >> "$run_dir/meta.txt"
   echo "test_seconds=$test_seconds" >> "$run_dir/meta.txt"
-  echo "duration_seconds=$((run_finished_epoch - run_started_epoch))" >> "$run_dir/meta.txt"
+  run_duration_seconds=$((run_finished_epoch - run_started_epoch))
+
+  echo "duration_seconds=$run_duration_seconds" >> "$run_dir/meta.txt"
   echo "finished=$(date +'%F %T')" >> "$run_dir/meta.txt"
   if [[ -x "$REPORT_RUNS_SCRIPT" ]]; then
     "$REPORT_RUNS_SCRIPT" --date "$(date +%F)" >/dev/null 2>&1 || true
@@ -1075,7 +1103,7 @@ while true; do
       status="$MSG_NEEDS_DECISION"
       guidance_detected=1
     elif [[ "$todo_before" != "$todo_after" || "$done_before" != "$done_after" || "$archive_before" != "$archive_after" ]]; then
-      status="$MSG_TASK_DONE"
+      status="DONE in $(format_duration_compact "$run_duration_seconds")"
     fi
     if [[ $no_tasks_detected -eq 1 ]]; then
       echo "[$(date +'%F %T')] run #$run_count $MSG_NO_TASKS_WAIT ${IDLE_SLEEP_SECONDS}s $MSG_NO_TASKS_WAIT_SUFFIX, $reasoning_tag"
