@@ -157,17 +157,16 @@ Runtime observability:
 - `tasks/logs/runs/*/meta.txt` includes:
   - `reasoning_requested`, `reasoning_selected`, `reasoning_reason`,
   - `failure_class`, `retry_count`, `stuck_timeout_hit`,
-  - `policy_violation`, `policy_reason`,
+  - `guard_violation`, `guard_reason`,
   - `gitignore_runtime_ok`, `gitignore_runtime_missing`,
   - `todo_duplicates_count`, `todo_duplicates_warning`, `todo_duplicates_fail_on_detect`,
   - `context_hash`, `prompt_hash`, `prompt_drift`, `drift_reason`,
-  - `phase_prepare_seconds`, `phase_agent_seconds`, `phase_policy_seconds`, `phase_maintenance_seconds`, `phase_finalize_seconds`,
+  - `phase_prepare_seconds`, `phase_agent_seconds`, `phase_maintenance_seconds`, `phase_finalize_seconds`,
   - `maintenance_mode`, `maintenance_ran`, `maintenance_seconds`, `maintenance_sections_moved`,
   - `test_seconds`, `duration_seconds`.
 - `scripts/report_runs.sh` daily JSON includes medians for:
   - `median_phase_prepare_seconds`,
   - `median_phase_agent_seconds`,
-  - `median_phase_policy_seconds`,
   - `median_phase_maintenance_seconds`,
   - `median_phase_finalize_seconds`.
 

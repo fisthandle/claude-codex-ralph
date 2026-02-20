@@ -34,7 +34,7 @@
 5. Skills layer: pakiet skilli ogólnych + pakiet PHP implementatora.
 
 ### 2.2 Kluczowe sygnały jakości
-- `failure_class`, `retry_count`, `stuck_timeout_hit`, `policy_violation`, `reasoning_selected`, `duration_seconds`, `test_seconds`.
+- `failure_class`, `retry_count`, `stuck_timeout_hit`, `guard_violation`, `reasoning_selected`, `duration_seconds`, `test_seconds`.
 - Stabilność: spadek powtarzalnych failure i krótszy czas do zielonego runu.
 - Agregacja telemetryki: `scripts/report_runs.sh` (nowy) buduje dzienny raport `tasks/logs/reports/YYYY-MM-DD.json`.
 
@@ -53,20 +53,17 @@
   - run przekraczający timeout kończy się kontrolowanie,
   - `meta.txt` dostaje `failure_class=stuck` i `stuck_timeout_hit=1`.
 
-### Task P0.2: Safe-stop semantics
+### Task P0.2: Stop semantics
 - Pliki: `ralph`, `README.md`
-- Dodaj rozróżnienie:
-  - `agent.stop` = zatrzymaj po bieżącym runie,
-  - `agent.safe-stop` = wymuś zakończenie przy wykrytym ryzyku/policy violation.
+- `agent.stop` = zatrzymaj po bieżącym runie.
 - `meta.txt`: `stop_reason=` oraz `stopped_by=`.
 - Priorytet sygnałów:
-  - watchdog timeout -> `stopped_by=watchdog`, `stop_reason=stuck_timeout`,
-  - safe-stop file -> `stopped_by=operator`, `stop_reason=safe_stop`.
+  - watchdog timeout -> `stopped_by=watchdog`, `stop_reason=stuck_timeout`.
 
 ### Task P0.3: Taksonomia failure w runtime
 - Pliki: `ralph`, `README.md`
 - Klasy minimalne:
-  - `infra_network`, `test_failure`, `lint_failure`, `policy_violation`, `stuck`, `unknown`.
+  - `infra_network`, `test_failure`, `lint_failure`, `guard_violation`, `stuck`, `unknown`.
 - `meta.txt` ma zawsze `failure_class=` (także dla sukcesu: `none`).
 
 **DoD P0**

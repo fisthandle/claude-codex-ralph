@@ -43,7 +43,6 @@ durations=()
 tests=()
 phase_prepare=()
 phase_agent=()
-phase_policy=()
 phase_maintenance=()
 phase_finalize=()
 declare -A failure_counts
@@ -57,7 +56,6 @@ for meta in "${meta_files[@]}"; do
   test_seconds="$(grep -E '^test_seconds=' "$meta" | tail -n 1 | cut -d= -f2 || echo 0)"
   phase_prepare_seconds="$(grep -E '^phase_prepare_seconds=' "$meta" | tail -n 1 | cut -d= -f2 || echo 0)"
   phase_agent_seconds="$(grep -E '^phase_agent_seconds=' "$meta" | tail -n 1 | cut -d= -f2 || echo 0)"
-  phase_policy_seconds="$(grep -E '^phase_policy_seconds=' "$meta" | tail -n 1 | cut -d= -f2 || echo 0)"
   phase_maintenance_seconds="$(grep -E '^phase_maintenance_seconds=' "$meta" | tail -n 1 | cut -d= -f2 || echo 0)"
   phase_finalize_seconds="$(grep -E '^phase_finalize_seconds=' "$meta" | tail -n 1 | cut -d= -f2 || echo 0)"
 
@@ -81,9 +79,6 @@ for meta in "${meta_files[@]}"; do
   if [[ "$phase_agent_seconds" =~ ^[0-9]+$ ]]; then
     phase_agent+=("$phase_agent_seconds")
   fi
-  if [[ "$phase_policy_seconds" =~ ^[0-9]+$ ]]; then
-    phase_policy+=("$phase_policy_seconds")
-  fi
   if [[ "$phase_maintenance_seconds" =~ ^[0-9]+$ ]]; then
     phase_maintenance+=("$phase_maintenance_seconds")
   fi
@@ -96,14 +91,12 @@ duration_blob="$(printf '%s\n' "${durations[@]:-}" | sed '/^$/d' || true)"
 test_blob="$(printf '%s\n' "${tests[@]:-}" | sed '/^$/d' || true)"
 phase_prepare_blob="$(printf '%s\n' "${phase_prepare[@]:-}" | sed '/^$/d' || true)"
 phase_agent_blob="$(printf '%s\n' "${phase_agent[@]:-}" | sed '/^$/d' || true)"
-phase_policy_blob="$(printf '%s\n' "${phase_policy[@]:-}" | sed '/^$/d' || true)"
 phase_maintenance_blob="$(printf '%s\n' "${phase_maintenance[@]:-}" | sed '/^$/d' || true)"
 phase_finalize_blob="$(printf '%s\n' "${phase_finalize[@]:-}" | sed '/^$/d' || true)"
 median_duration="$(median_from_numbers "$duration_blob")"
 median_test="$(median_from_numbers "$test_blob")"
 median_phase_prepare="$(median_from_numbers "$phase_prepare_blob")"
 median_phase_agent="$(median_from_numbers "$phase_agent_blob")"
-median_phase_policy="$(median_from_numbers "$phase_policy_blob")"
 median_phase_maintenance="$(median_from_numbers "$phase_maintenance_blob")"
 median_phase_finalize="$(median_from_numbers "$phase_finalize_blob")"
 
@@ -128,7 +121,6 @@ cat > "$report_file" <<EOF
   "median_test_seconds": $median_test,
   "median_phase_prepare_seconds": $median_phase_prepare,
   "median_phase_agent_seconds": $median_phase_agent,
-  "median_phase_policy_seconds": $median_phase_policy,
   "median_phase_maintenance_seconds": $median_phase_maintenance,
   "median_phase_finalize_seconds": $median_phase_finalize,
   "failure_classes": { $failure_json },
