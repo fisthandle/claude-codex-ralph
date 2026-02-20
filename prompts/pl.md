@@ -18,6 +18,7 @@ TRYB PRACY
 - Budzet iteracji: maksymalnie 3 passy (`explore -> edit -> validate`).
 - Ogranicz output: nie wklejaj dlugich diffow, calych plikow ani pelnych logow testow; raportuj tylko podsumowania i kluczowe bledy.
 - `subag=auto`: uruchamiaj subagentow tylko warunkowo (audit/research/diagnoza infra), nie jako always-on.
+- Dla taskow PHP preferuj workflow: `php-context -> php-implement -> php-validation -> php-gatekeeper`.
 
 ALGORYTM (JEDNO ZADANIE)
 

@@ -22,6 +22,8 @@ case "$RALPH_LANG" in
     MSG_BAD_PID="blad: nieprawidlowy PID:"
     MSG_STOP_REMOVED="usunieto stop, mozesz ponownie ustawic powtarzajac komende"
     MSG_STOP_SET="ustawiono stop"
+    MSG_SAFE_STOP_REMOVED="usunieto safe-stop"
+    MSG_SAFE_STOP_SET="ustawiono safe-stop"
     MSG_RESTART_PLANNED="restart zaplanowany: przeladuje sie po biezacym runie"
     MSG_RESTART_WRONG_PID="blad: aktywny PID dla tego repo to"
     MSG_RESTART_NO_PROCESS="blad: brak aktywnego procesu ralph run w tym repo"
@@ -56,6 +58,7 @@ case "$RALPH_LANG" in
   ralph run            - uruchom petle agenta
   ralph restart <pid>  - przeladuj aktywny proces (po PID)
   ralph stop           - przelacz stop (ustaw/usun tasks/agent.stop)
+  ralph safe-stop      - przelacz safe-stop (ustaw/usun tasks/agent.safe-stop)
   ralph help           - pokaz to menu
 
 Zmienne srodowiskowe:
@@ -71,6 +74,12 @@ Zmienne srodowiskowe:
   RALPH_WT_MAX_LINES     Limit linii git status dopinanych do promptu (domyslnie: 40)
   RALPH_GIT_SYNC_ON_START 1 = git pull --rebase raz na start sesji (domyslnie: 1)
   RALPH_GIT_PUSH_ON_IDLE  1 = push zaleglych commitow przy idle/stop (domyslnie: 1)
+  STUCK_TIMEOUT_SECONDS  Timeout pojedynczej proby agenta (domyslnie: 1800)
+  STUCK_KILL_GRACE_SECONDS  Czas do wymuszenia kill po timeout (domyslnie: 20)
+  MAX_RETRIES_ON_FAILURE Retry po bledzie retryowalnym (domyslnie: 1)
+  BACKOFF_MULTIPLIER     Mnoznik backoff retry (domyslnie: 2)
+  RUN_BUDGET_WINDOW_SECONDS Okno budzetu runow (domyslnie: 3600)
+  MAX_RUNS_PER_WINDOW    Maks runow w oknie (domyslnie: 30)
   RALPH_HOME    Katalog instalacji Ralph (auto-wykrywany)"
     ;;
   en)
@@ -79,6 +88,8 @@ Zmienne srodowiskowe:
     MSG_BAD_PID="error: invalid PID:"
     MSG_STOP_REMOVED="stop removed, repeat command to set again"
     MSG_STOP_SET="stop set"
+    MSG_SAFE_STOP_REMOVED="safe-stop removed"
+    MSG_SAFE_STOP_SET="safe-stop set"
     MSG_RESTART_PLANNED="restart scheduled: will reload after current run"
     MSG_RESTART_WRONG_PID="error: active PID for this repo is"
     MSG_RESTART_NO_PROCESS="error: no active ralph run process in this repo"
@@ -113,6 +124,7 @@ Zmienne srodowiskowe:
   ralph run            - start agent loop
   ralph restart <pid>  - reload active process (by PID)
   ralph stop           - toggle stop (set/remove tasks/agent.stop)
+  ralph safe-stop      - toggle safe-stop (set/remove tasks/agent.safe-stop)
   ralph help           - show this menu
 
 Environment:
@@ -128,6 +140,12 @@ Environment:
   RALPH_WT_MAX_LINES     Max git status lines appended to prompt (default: 40)
   RALPH_GIT_SYNC_ON_START 1 = git pull --rebase once at session start (default: 1)
   RALPH_GIT_PUSH_ON_IDLE  1 = push pending commits on idle/stop (default: 1)
+  STUCK_TIMEOUT_SECONDS  Timeout for a single agent attempt (default: 1800)
+  STUCK_KILL_GRACE_SECONDS  Grace period before hard kill after timeout (default: 20)
+  MAX_RETRIES_ON_FAILURE Retry attempts for retryable failures (default: 1)
+  BACKOFF_MULTIPLIER     Backoff multiplier for retries (default: 2)
+  RUN_BUDGET_WINDOW_SECONDS Run budget window in seconds (default: 3600)
+  MAX_RUNS_PER_WINDOW    Max runs allowed per budget window (default: 30)
   RALPH_HOME    Ralph installation directory (auto-detected)"
     ;;
   *)
@@ -145,10 +163,12 @@ TODO_FILE="$TASKS_DIR/TODO.md"
 DONE_FILE="$TASKS_DIR/DONE.md"
 TODO_ARCHIVE_FILE="$TASKS_DIR/TODO_ARCHIVE.md"
 STOP_FILE="$TASKS_DIR/agent.stop"
+SAFE_STOP_FILE="$TASKS_DIR/agent.safe-stop"
 RESTART_FILE="$TASKS_DIR/agent.restart"
 LOG_DIR="$TASKS_DIR/logs"
 RUNS_DIR="$LOG_DIR/runs"
 PID_FILE="$LOG_DIR/ralph.pid"
+RUN_BUDGET_STATE_FILE="$LOG_DIR/run_budget_state.json"
 
 MODEL="${MODEL:-gpt-5.3-codex}"
 REASONING_INPUT="${REASONING:-auto}"
@@ -164,12 +184,36 @@ RALPH_INLINE_CLAUDE="${RALPH_INLINE_CLAUDE:-0}"
 RALPH_WT_MAX_LINES="${RALPH_WT_MAX_LINES:-40}"
 RALPH_GIT_SYNC_ON_START="${RALPH_GIT_SYNC_ON_START:-1}"
 RALPH_GIT_PUSH_ON_IDLE="${RALPH_GIT_PUSH_ON_IDLE:-1}"
+STUCK_TIMEOUT_SECONDS="${STUCK_TIMEOUT_SECONDS:-1800}"
+STUCK_KILL_GRACE_SECONDS="${STUCK_KILL_GRACE_SECONDS:-20}"
+MAX_RETRIES_ON_FAILURE="${MAX_RETRIES_ON_FAILURE:-1}"
+BACKOFF_MULTIPLIER="${BACKOFF_MULTIPLIER:-2}"
+RUN_BUDGET_WINDOW_SECONDS="${RUN_BUDGET_WINDOW_SECONDS:-3600}"
+MAX_RUNS_PER_WINDOW="${MAX_RUNS_PER_WINDOW:-30}"
 
 if [[ ! "$RALPH_WT_MAX_LINES" =~ ^[0-9]+$ ]]; then
   RALPH_WT_MAX_LINES="40"
 fi
 if [[ ! "$TODO_MIN_LINES_FOR_MODEL" =~ ^[0-9]+$ ]]; then
   TODO_MIN_LINES_FOR_MODEL="10"
+fi
+if [[ ! "$STUCK_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
+  STUCK_TIMEOUT_SECONDS="1800"
+fi
+if [[ ! "$STUCK_KILL_GRACE_SECONDS" =~ ^[0-9]+$ ]]; then
+  STUCK_KILL_GRACE_SECONDS="20"
+fi
+if [[ ! "$MAX_RETRIES_ON_FAILURE" =~ ^[0-9]+$ ]]; then
+  MAX_RETRIES_ON_FAILURE="1"
+fi
+if [[ ! "$BACKOFF_MULTIPLIER" =~ ^[0-9]+$ ]] || [[ "$BACKOFF_MULTIPLIER" -lt 1 ]]; then
+  BACKOFF_MULTIPLIER="2"
+fi
+if [[ ! "$RUN_BUDGET_WINDOW_SECONDS" =~ ^[0-9]+$ ]]; then
+  RUN_BUDGET_WINDOW_SECONDS="3600"
+fi
+if [[ ! "$MAX_RUNS_PER_WINDOW" =~ ^[0-9]+$ ]]; then
+  MAX_RUNS_PER_WINDOW="30"
 fi
 
 COMMAND="${1:-help}"
@@ -225,13 +269,24 @@ case "$COMMAND" in
     fi
     exit 0
     ;;
+  safe-stop)
+    if [[ -f "$SAFE_STOP_FILE" ]]; then
+      rm -f "$SAFE_STOP_FILE"
+      echo "$MSG_SAFE_STOP_REMOVED"
+    else
+      mkdir -p "$TASKS_DIR"
+      touch "$SAFE_STOP_FILE"
+      echo "$MSG_SAFE_STOP_SET: $SAFE_STOP_FILE"
+    fi
+    exit 0
+    ;;
   help|--help|-h)
     echo "$MSG_HELP"
     exit 0
     ;;
   *)
     echo "$MSG_UNKNOWN_CMD $COMMAND"
-    echo "Usage: ralph [run|restart <pid>|stop|help]"
+    echo "Usage: ralph [run|restart <pid>|stop|safe-stop|help]"
     exit 2
     ;;
 esac
@@ -263,6 +318,12 @@ command -v codex >/dev/null || {
   echo "$MSG_CODEX_NOT_FOUND"
   exit 1
 }
+HAS_TIMEOUT=0
+if command -v timeout >/dev/null 2>&1; then
+  HAS_TIMEOUT=1
+fi
+COMMIT_POLICY_SCRIPT="$RALPH_HOME/scripts/validate_commit_policy.sh"
+REPORT_RUNS_SCRIPT="$RALPH_HOME/scripts/report_runs.sh"
 [[ -f "$BASE_PROMPT_FILE" ]] || {
   echo "$MSG_PROMPT_NOT_FOUND $BASE_PROMPT_FILE"
   exit 1
@@ -474,6 +535,167 @@ select_reasoning() {
   REASONING_REASON="default auto heuristic"
 }
 
+read_meta_value() {
+  local key="$1"
+  local file="$2"
+  [[ -f "$file" ]] || return 1
+  grep -E "^${key}=" "$file" | tail -n 1 | cut -d= -f2- || true
+}
+
+previous_run_meta_value() {
+  local key="$1"
+  local current_run_dir="$2"
+  local run_dir
+  local value=""
+
+  while IFS= read -r run_dir; do
+    [[ -d "$run_dir" ]] || continue
+    [[ "$run_dir" == "$current_run_dir" ]] && continue
+    value="$(read_meta_value "$key" "$run_dir/meta.txt")"
+    if [[ -n "$value" ]]; then
+      printf '%s\n' "$value"
+      return 0
+    fi
+  done < <(ls -1dt "$RUNS_DIR"/* 2>/dev/null || true)
+  return 1
+}
+
+build_context_hash() {
+  local file
+  if [[ "$#" -eq 0 ]]; then
+    echo "none"
+    return 0
+  fi
+  {
+    for file in "$@"; do
+      printf '%s\0' "$file"
+      sha256sum "$file" 2>/dev/null || true
+    done
+  } | sha256sum | awk '{print $1}'
+}
+
+save_run_budget_state() {
+  local entries=("$@")
+  local i
+  local total="${#entries[@]}"
+
+  {
+    echo "{"
+    echo "  \"run_starts\": ["
+    for ((i = 0; i < total; i++)); do
+      if [[ "$i" -lt $((total - 1)) ]]; then
+        printf '    %s,\n' "${entries[$i]}"
+      else
+        printf '    %s\n' "${entries[$i]}"
+      fi
+    done
+    echo "  ]"
+    echo "}"
+  } > "$RUN_BUDGET_STATE_FILE"
+}
+
+load_run_budget_state() {
+  [[ -f "$RUN_BUDGET_STATE_FILE" ]] || return 0
+  grep -Eo '[0-9]+' "$RUN_BUDGET_STATE_FILE" || true
+}
+
+RUN_BUDGET_USED=0
+enforce_run_budget() {
+  local now
+  local cooldown
+  local entries=()
+  local kept=()
+  local ts
+
+  if [[ "$MAX_RUNS_PER_WINDOW" -le 0 || "$RUN_BUDGET_WINDOW_SECONDS" -le 0 ]]; then
+    RUN_BUDGET_USED=0
+    return 0
+  fi
+
+  while IFS= read -r ts; do
+    [[ "$ts" =~ ^[0-9]+$ ]] && entries+=("$ts")
+  done < <(load_run_budget_state)
+
+  now="$(date +%s)"
+  while true; do
+    kept=()
+    for ts in "${entries[@]}"; do
+      if [[ $((now - ts)) -lt "$RUN_BUDGET_WINDOW_SECONDS" ]]; then
+        kept+=("$ts")
+      fi
+    done
+    entries=("${kept[@]}")
+
+    if [[ "${#entries[@]}" -lt "$MAX_RUNS_PER_WINDOW" ]]; then
+      break
+    fi
+
+    cooldown=$((RUN_BUDGET_WINDOW_SECONDS - (now - entries[0]) + 1))
+    if [[ "$cooldown" -lt 1 ]]; then
+      cooldown=1
+    fi
+    echo "[$(date +'%F %T')] budget: reached ${#entries[@]}/$MAX_RUNS_PER_WINDOW, cooldown ${cooldown}s"
+    sleep_with_dots "$cooldown"
+    now="$(date +%s)"
+  done
+
+  entries+=("$now")
+  RUN_BUDGET_USED="${#entries[@]}"
+  save_run_budget_state "${entries[@]}"
+}
+
+classify_failure() {
+  local exit_code="$1"
+  local log_file="$2"
+  local stuck_timeout_hit="$3"
+  local policy_violation="$4"
+
+  if [[ "$policy_violation" == "1" ]]; then
+    echo "policy_violation"
+    return 0
+  fi
+  if [[ "$exit_code" -eq 0 ]]; then
+    echo "none"
+    return 0
+  fi
+  if [[ "$stuck_timeout_hit" == "1" ]]; then
+    echo "stuck"
+    return 0
+  fi
+  if infra_failure_signature "$log_file" >/dev/null 2>&1; then
+    echo "infra_network"
+    return 0
+  fi
+  if grep -Eqi 'lint|phpstan|eslint|flake8|pylint|style check|format check' "$log_file"; then
+    echo "lint_failure"
+    return 0
+  fi
+  if grep -Eqi 'tests? failed|test suite failed|assertion|FAILURES!|failing test|\\bFAILED\\b|\\bfail\\b' "$log_file"; then
+    echo "test_failure"
+    return 0
+  fi
+  echo "unknown"
+}
+
+is_retryable_failure() {
+  case "$1" in
+    infra_network|stuck) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+compute_backoff_seconds() {
+  local retry_index="$1"
+  local out="$ERROR_SLEEP_SECONDS"
+  local i=1
+
+  while [[ "$i" -lt "$retry_index" ]]; do
+    out=$((out * BACKOFF_MULTIPLIER))
+    i=$((i + 1))
+  done
+  echo "$out"
+}
+
 trap 'echo "$MSG_STOPPED"; notify normal "$MSG_STOPPED"; exit 130' INT TERM
 
 run_count=0
@@ -537,6 +759,11 @@ sync_pull_once
 
 while true; do
   restart_self_if_requested
+  [[ -f "$SAFE_STOP_FILE" ]] && {
+    push_pending_commits
+    echo "Safe-stop file detected."
+    exit 0
+  }
   [[ -f "$STOP_FILE" ]] && {
     push_pending_commits
     echo "Stop file detected."
@@ -551,6 +778,8 @@ while true; do
     continue
   fi
 
+  enforce_run_budget
+
   run_count=$((run_count + 1))
   ts="$(date +%Y%m%d-%H%M%S)"
   run_dir="$RUNS_DIR/$ts-$run_count"
@@ -562,7 +791,11 @@ while true; do
   select_reasoning
   reasoning_selected="$REASONING_SELECTED"
   reasoning_reason="$REASONING_REASON"
-  reasoning_tag="reasoning_requested=$REASONING_INPUT reasoning_selected=$reasoning_selected"
+  if [[ "$REASONING_REQUESTED" == "auto" ]]; then
+    reasoning_tag="reason=auto($reasoning_selected)"
+  else
+    reasoning_tag="reason=$reasoning_selected"
+  fi
 
   echo "[$(date +'%F %T')] $MSG_STARTED run #$run_count ($reasoning_tag)"
   notify normal "Run #$run_count started"
@@ -574,6 +807,8 @@ while true; do
   if [[ -f "$ROOT_DIR/CLAUDE.md" && "$ROOT_DIR/CLAUDE.md" != "$RALPH_HOME/CLAUDE.md" ]]; then
     context_files+=("$ROOT_DIR/CLAUDE.md")
   fi
+
+  context_hash="$(build_context_hash "${context_files[@]}")"
 
   if [[ "$RALPH_INLINE_CLAUDE" == "1" ]]; then
     for context_file in "${context_files[@]}"; do
@@ -614,6 +849,24 @@ while true; do
     echo
   } >> "$combined"
   cat "$BASE_PROMPT_FILE" >> "$combined"
+  prompt_hash="$(file_hash "$combined")"
+  previous_context_hash="$(previous_run_meta_value "context_hash" "$run_dir" || true)"
+  previous_prompt_hash="$(previous_run_meta_value "prompt_hash" "$run_dir" || true)"
+  prompt_drift="0"
+  drift_reason="none"
+  if [[ -n "$previous_context_hash" && "$previous_context_hash" != "$context_hash" ]]; then
+    prompt_drift="1"
+    drift_reason="context_changed"
+  fi
+  if [[ -n "$previous_prompt_hash" && "$previous_prompt_hash" != "$prompt_hash" ]]; then
+    if [[ "$prompt_drift" == "0" ]]; then
+      prompt_drift="1"
+      drift_reason="prompt_changed"
+    fi
+  fi
+  if [[ "$prompt_drift" == "1" ]]; then
+    echo "[$(date +'%F %T')] warning: prompt drift detected ($drift_reason)"
+  fi
 
   cp "$combined" "$run_dir/prompt.txt"
   {
@@ -624,33 +877,121 @@ while true; do
     echo "reasoning_requested=$REASONING_INPUT"
     echo "reasoning_selected=$reasoning_selected"
     echo "reasoning_reason=$reasoning_reason"
+    echo "run_budget_window_seconds=$RUN_BUDGET_WINDOW_SECONDS"
+    echo "max_runs_per_window=$MAX_RUNS_PER_WINDOW"
+    echo "run_budget_used=$RUN_BUDGET_USED"
+    echo "context_hash=$context_hash"
+    echo "prompt_hash=$prompt_hash"
+    echo "prompt_drift=$prompt_drift"
+    echo "drift_reason=$drift_reason"
     echo "root=$ROOT_DIR"
   } > "$run_dir/meta.txt"
 
   todo_before="$(file_hash "$TODO_FILE")"
   done_before="$(file_hash "$DONE_FILE")"
   archive_before="$(file_hash "$TODO_ARCHIVE_FILE")"
+  head_before="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
 
   run_started_epoch="$(date +%s)"
+  : > "$log_file"
+  attempt=0
+  retry_count=0
+  stuck_timeout_hit=0
+  failure_class="none"
+  infra_sig="none"
+  policy_violation=0
+
   set +e
-  if [[ "$RALPH_VERBOSE" == "1" ]]; then
-    codex -a never -s workspace-write exec \
-      -C "$ROOT_DIR" \
-      -m "$MODEL" \
-      -c model_reasoning_effort="$reasoning_selected" \
-      "$(cat "$combined")" 2>&1 | tee "$log_file"
-    exit_code=${PIPESTATUS[0]}
-  else
-    codex -a never -s workspace-write exec \
-      -C "$ROOT_DIR" \
-      -m "$MODEL" \
-      -c model_reasoning_effort="$reasoning_selected" \
-      "$(cat "$combined")" > "$log_file" 2>&1
-    exit_code=$?
-  fi
+  while true; do
+    attempt=$((attempt + 1))
+    echo "[$(date +'%F %T')] attempt=$attempt" >> "$log_file"
+
+    if [[ "$RALPH_VERBOSE" == "1" ]]; then
+      if [[ "$HAS_TIMEOUT" == "1" && "$STUCK_TIMEOUT_SECONDS" -gt 0 ]]; then
+        timeout -k "${STUCK_KILL_GRACE_SECONDS}s" "${STUCK_TIMEOUT_SECONDS}s" \
+          codex -a never -s workspace-write exec \
+          -C "$ROOT_DIR" \
+          -m "$MODEL" \
+          -c model_reasoning_effort="$reasoning_selected" \
+          "$(cat "$combined")" 2>&1 | tee -a "$log_file"
+        exit_code=${PIPESTATUS[0]}
+      else
+        codex -a never -s workspace-write exec \
+          -C "$ROOT_DIR" \
+          -m "$MODEL" \
+          -c model_reasoning_effort="$reasoning_selected" \
+          "$(cat "$combined")" 2>&1 | tee -a "$log_file"
+        exit_code=${PIPESTATUS[0]}
+      fi
+    else
+      if [[ "$HAS_TIMEOUT" == "1" && "$STUCK_TIMEOUT_SECONDS" -gt 0 ]]; then
+        timeout -k "${STUCK_KILL_GRACE_SECONDS}s" "${STUCK_TIMEOUT_SECONDS}s" \
+          codex -a never -s workspace-write exec \
+          -C "$ROOT_DIR" \
+          -m "$MODEL" \
+          -c model_reasoning_effort="$reasoning_selected" \
+          "$(cat "$combined")" >> "$log_file" 2>&1
+        exit_code=$?
+      else
+        codex -a never -s workspace-write exec \
+          -C "$ROOT_DIR" \
+          -m "$MODEL" \
+          -c model_reasoning_effort="$reasoning_selected" \
+          "$(cat "$combined")" >> "$log_file" 2>&1
+        exit_code=$?
+      fi
+    fi
+
+    attempt_stuck=0
+    if [[ "$HAS_TIMEOUT" == "1" && "$STUCK_TIMEOUT_SECONDS" -gt 0 && "$exit_code" -eq 124 ]]; then
+      attempt_stuck=1
+      stuck_timeout_hit=1
+    fi
+
+    infra_sig="$(infra_failure_signature "$log_file" || true)"
+    if [[ -z "$infra_sig" ]]; then
+      infra_sig="none"
+    fi
+    failure_class="$(classify_failure "$exit_code" "$log_file" "$attempt_stuck" "0")"
+
+    if [[ "$exit_code" -eq 0 ]]; then
+      break
+    fi
+    if is_retryable_failure "$failure_class" && [[ "$retry_count" -lt "$MAX_RETRIES_ON_FAILURE" ]]; then
+      retry_count=$((retry_count + 1))
+      backoff_seconds="$(compute_backoff_seconds "$retry_count")"
+      echo "[$(date +'%F %T')] retry: class=$failure_class, attempt=$retry_count/$MAX_RETRIES_ON_FAILURE, backoff=${backoff_seconds}s" | tee -a "$log_file"
+      sleep_with_dots "$backoff_seconds"
+      continue
+    fi
+    break
+  done
   set -e
   run_finished_epoch="$(date +%s)"
   rm -f "$combined"
+
+  head_after="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+  policy_reason="none"
+  if [[ -x "$COMMIT_POLICY_SCRIPT" ]]; then
+    if ! "$COMMIT_POLICY_SCRIPT" "$ROOT_DIR" "$head_before" "$head_after" > "$run_dir/policy_check.log" 2>&1; then
+      policy_violation=1
+      policy_reason="$(tail -n 1 "$run_dir/policy_check.log" | tr -d '\r' || true)"
+      [[ -z "$policy_reason" ]] && policy_reason="policy_check_failed"
+      touch "$SAFE_STOP_FILE"
+    fi
+  else
+    policy_reason="script_unavailable"
+  fi
+
+  if [[ "$policy_violation" -eq 1 && "$exit_code" -eq 0 ]]; then
+    exit_code=50
+  fi
+
+  failure_class="$(classify_failure "$exit_code" "$log_file" "$stuck_timeout_hit" "$policy_violation")"
+  if [[ -z "$infra_sig" || "$infra_sig" == "none" ]]; then
+    infra_sig="$(infra_failure_signature "$log_file" || true)"
+    [[ -z "$infra_sig" ]] && infra_sig="none"
+  fi
 
   test_seconds="$(grep -Eo 'RALPH_TEST_SECONDS=[0-9]+' "$log_file" | tail -n 1 | cut -d= -f2 || true)"
   if [[ -z "$test_seconds" ]]; then
@@ -661,10 +1002,36 @@ while true; do
   done_after="$(file_hash "$DONE_FILE")"
   archive_after="$(file_hash "$TODO_ARCHIVE_FILE")"
 
+  stop_reason="none"
+  stopped_by="none"
+  if [[ "$stuck_timeout_hit" -eq 1 ]]; then
+    stop_reason="stuck_timeout"
+    stopped_by="watchdog"
+    touch "$SAFE_STOP_FILE"
+  elif [[ "$policy_violation" -eq 1 ]]; then
+    stop_reason="policy_violation"
+    stopped_by="watchdog"
+  elif [[ -f "$SAFE_STOP_FILE" ]]; then
+    stop_reason="safe_stop"
+    stopped_by="operator"
+  fi
+
   echo "exit_code=$exit_code" >> "$run_dir/meta.txt"
+  echo "attempt_count=$attempt" >> "$run_dir/meta.txt"
+  echo "retry_count=$retry_count" >> "$run_dir/meta.txt"
+  echo "failure_class=$failure_class" >> "$run_dir/meta.txt"
+  echo "infra_failure_signature=$infra_sig" >> "$run_dir/meta.txt"
+  echo "policy_violation=$policy_violation" >> "$run_dir/meta.txt"
+  echo "policy_reason=$policy_reason" >> "$run_dir/meta.txt"
+  echo "stuck_timeout_hit=$stuck_timeout_hit" >> "$run_dir/meta.txt"
+  echo "stop_reason=$stop_reason" >> "$run_dir/meta.txt"
+  echo "stopped_by=$stopped_by" >> "$run_dir/meta.txt"
   echo "test_seconds=$test_seconds" >> "$run_dir/meta.txt"
   echo "duration_seconds=$((run_finished_epoch - run_started_epoch))" >> "$run_dir/meta.txt"
   echo "finished=$(date +'%F %T')" >> "$run_dir/meta.txt"
+  if [[ -x "$REPORT_RUNS_SCRIPT" ]]; then
+    "$REPORT_RUNS_SCRIPT" --date "$(date +%F)" >/dev/null 2>&1 || true
+  fi
 
   no_tasks_detected=0
   guidance_detected=0
@@ -687,12 +1054,12 @@ while true; do
     else
       echo "[$(date +'%F %T')] $status ($reasoning_tag)"
     fi
-    echo "[$(date +'%F %T')] run #$run_count test_seconds=$test_seconds ($reasoning_tag)"
+    echo "[$(date +'%F %T')] run #$run_count test_seconds=$test_seconds failure_class=$failure_class ($reasoning_tag)"
     notify normal "Run #$run_count: $status"
   else
     total_fail=$((total_fail + 1))
-    echo "[$(date +'%F %T')] $MSG_ERROR: run #$run_count exit=$exit_code (log: $log_file) ($reasoning_tag)"
-    echo "[$(date +'%F %T')] run #$run_count test_seconds=$test_seconds ($reasoning_tag)"
+    echo "[$(date +'%F %T')] $MSG_ERROR: run #$run_count exit=$exit_code class=$failure_class (log: $log_file) ($reasoning_tag)"
+    echo "[$(date +'%F %T')] run #$run_count test_seconds=$test_seconds failure_class=$failure_class ($reasoning_tag)"
     tail -n 40 "$log_file" || true
     notify critical "Run #$run_count $MSG_FAILED (exit $exit_code)"
   fi
@@ -702,6 +1069,11 @@ while true; do
       [[ -f "$STOP_FILE" ]] && {
         push_pending_commits
         echo "Stop file detected."
+        exit 0
+      }
+      [[ -f "$SAFE_STOP_FILE" ]] && {
+        push_pending_commits
+        echo "Safe-stop file detected."
         exit 0
       }
       if [[ $no_tasks_detected -eq 1 ]]; then
@@ -715,6 +1087,11 @@ while true; do
     exit "$exit_code"
   fi
 
+  [[ -f "$SAFE_STOP_FILE" ]] && {
+    push_pending_commits
+    echo "Safe-stop file detected."
+    exit 0
+  }
   [[ -f "$STOP_FILE" ]] && {
     push_pending_commits
     echo "Stop file detected."

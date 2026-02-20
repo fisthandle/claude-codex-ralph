@@ -18,6 +18,7 @@ OPERATING MODE
 - Iteration budget: at most 3 passes (`explore -> edit -> validate`).
 - Keep output compact: do not dump long diffs, full files, or full test logs; report summaries and key error lines only.
 - `subag=auto`: use subagents only conditionally (audit/research/infra diagnosis), not as always-on.
+- For PHP tasks, prefer: `php-context -> php-implement -> php-validation -> php-gatekeeper`.
 
 ALGORITHM (SINGLE TASK)
 

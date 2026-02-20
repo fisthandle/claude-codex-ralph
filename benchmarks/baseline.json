@@ -1,0 +1,10 @@
+{
+  "baseline_id": "v1",
+  "success_rate": 1.0,
+  "median_duration_seconds": 120,
+  "median_test_seconds": 30,
+  "retry_rate": 0.05,
+  "success_rate_pp_drop": 3,
+  "median_duration_pct_increase": 15,
+  "retry_rate_pct_increase": 20
+}

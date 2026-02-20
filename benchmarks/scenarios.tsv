@@ -1,0 +1,2 @@
+# task_id<TAB>command
+help-smoke	./ralph help >/dev/null

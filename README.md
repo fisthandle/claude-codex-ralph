@@ -58,12 +58,31 @@ Then in Claude Code, use `/todo` followed by a task description. The skill
 analyzes your codebase and writes a detailed implementation spec directly into
 `tasks/TODO.md` — ready for Ralph to pick up.
 
+### PHP skills pack (optional)
+
+Ralph also ships a PHP implementation workflow:
+
+- `php-context` -> analyze scope and dependencies
+- `php-implement` -> implement scoped changes
+- `php-validation` -> run tests and measure test time
+- `php-gatekeeper` -> final security/quality/commit gate
+
+Install all:
+
+```bash
+cp -r ralph/skills/php-context ~/.claude/skills/php-context
+cp -r ralph/skills/php-implement ~/.claude/skills/php-implement
+cp -r ralph/skills/php-validation ~/.claude/skills/php-validation
+cp -r ralph/skills/php-gatekeeper ~/.claude/skills/php-gatekeeper
+```
+
 ## Usage
 
 ```bash
 cd your-project-repo
 ralph run              # start the loop
 ralph stop             # toggle stop file (set/remove tasks/agent.stop)
+ralph safe-stop        # toggle safe-stop (set/remove tasks/agent.safe-stop)
 ralph restart <pid>    # reload a running process
 ralph help             # show help
 ```
@@ -88,6 +107,12 @@ All configuration is via environment variables:
 | `RALPH_WT_MAX_LINES` | `40` | Max `git status --short` lines appended to each prompt |
 | `RALPH_GIT_SYNC_ON_START` | `1` | Set to `0` to skip one-time `git pull --rebase` at session start |
 | `RALPH_GIT_PUSH_ON_IDLE` | `1` | Set to `0` to disable auto-push of pending commits on idle/stop |
+| `STUCK_TIMEOUT_SECONDS` | `1800` | Timeout for a single agent attempt (`timeout` command) |
+| `STUCK_KILL_GRACE_SECONDS` | `20` | Grace period before hard kill after timeout |
+| `MAX_RETRIES_ON_FAILURE` | `1` | Retry count for retryable failures (`infra_network`, `stuck`) |
+| `BACKOFF_MULTIPLIER` | `2` | Multiplier for retry backoff |
+| `RUN_BUDGET_WINDOW_SECONDS` | `3600` | Run budget window size in seconds |
+| `MAX_RUNS_PER_WINDOW` | `30` | Maximum runs allowed in one budget window |
 | `BASE_PROMPT_FILE` | `prompts/{lang}.md` | Override agent prompt file |
 
 Example:
@@ -121,6 +146,17 @@ Subagent policy:
   - max 2 subagents, timeout 240s, max 1 retry,
   - fallback to local execution if subagent is unavailable.
 
+Runtime observability:
+
+- Every run prints a compact reason tag:
+  - `reason=auto(medium)` for auto selection,
+  - `reason=high` (or another fixed level) for manual override.
+- `tasks/logs/runs/*/meta.txt` includes:
+  - `reasoning_requested`, `reasoning_selected`, `reasoning_reason`,
+  - `failure_class`, `retry_count`, `stuck_timeout_hit`,
+  - `context_hash`, `prompt_hash`, `prompt_drift`, `drift_reason`,
+  - `test_seconds`, `duration_seconds`.
+
 ## Prompt Context Order
 
 For each `ralph run` iteration, context files are loaded in this order:
@@ -133,6 +169,28 @@ For each `ralph run` iteration, context files are loaded in this order:
 If `RALPH_INLINE_CLAUDE=1`, Ralph inlines these files directly into `prompt.txt`.
 Otherwise, it lists them under "Runtime context files".
 
+## Eval Harness
+
+- Run benchmark scenarios:
+
+```bash
+benchmarks/run_eval.sh
+```
+
+- Compare against baseline gate:
+
+```bash
+benchmarks/compare.sh benchmarks/baseline.json tasks/logs/benchmarks/<run>.json
+```
+
+- Generate daily run report:
+
+```bash
+scripts/report_runs.sh --date "$(date +%F)"
+```
+
+See details: `docs/benchmarks.md`.
+
 ## File structure
 
 | File | Purpose |
@@ -141,7 +199,11 @@ Otherwise, it lists them under "Runtime context files".
 | `prompts/pl.md` | Agent prompt (Polish) |
 | `prompts/en.md` | Agent prompt (English) |
 | `archive_todo.sh` | Utility: archive completed sections from TODO.md |
+| `benchmarks/*` | Eval harness and baseline gate |
+| `scripts/report_runs.sh` | Aggregate run telemetry into daily JSON report |
+| `scripts/validate_commit_policy.sh` | Post-run commit policy check |
 | `skills/todo/SKILL.md` | Claude Code skill for writing structured tasks |
+| `skills/php-*/SKILL.md` | PHP implementation workflow skills |
 
 ## TODO.md format
 
@@ -189,15 +251,20 @@ tasks/
   DONE.md              # completion log
   TODO_ARCHIVE.md      # archived DONE sections
   agent.stop           # touch to stop the loop
+  agent.safe-stop      # touch to request safe-stop
   agent.restart        # used by ralph restart
   logs/
     ralph.pid          # PID lock file
+    run_budget_state.json # persisted run budget state
+    reports/
+      YYYY-MM-DD.json  # aggregated daily report
     latest -> runs/... # symlink to latest run
     runs/
       20260212-143000-1/
         stdout.log     # agent output
         prompt.txt     # prompt sent to agent
-        meta.txt       # run metadata (incl. reasoning_requested/selected/reason, test_seconds, duration_seconds)
+        policy_check.log # commit policy diagnostics
+        meta.txt       # run metadata (reasoning, failure class, drift, retries, test_seconds, duration_seconds)
 ```
 
 ## License
