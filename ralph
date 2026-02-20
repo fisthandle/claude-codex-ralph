@@ -97,6 +97,8 @@ Zmienne srodowiskowe:
   BACKOFF_MULTIPLIER     Mnoznik backoff retry (domyslnie: 2)
   RUN_BUDGET_WINDOW_SECONDS Okno budzetu runow (domyslnie: 3600)
   MAX_RUNS_PER_WINDOW    Maks runow w oknie (domyslnie: 30)
+  RALPH_TODO_MAINTENANCE_MODE Tryb maintenance TODO: off|idle|periodic (domyslnie: idle)
+  RALPH_TODO_MAINTENANCE_EVERY Co ile runow maintenance dla trybu periodic (domyslnie: 10)
   RALPH_HOME    Katalog instalacji Ralph (auto-wykrywany)"
     ;;
   en)
@@ -165,6 +167,8 @@ Environment:
   BACKOFF_MULTIPLIER     Backoff multiplier for retries (default: 2)
   RUN_BUDGET_WINDOW_SECONDS Run budget window in seconds (default: 3600)
   MAX_RUNS_PER_WINDOW    Max runs allowed per budget window (default: 30)
+  RALPH_TODO_MAINTENANCE_MODE TODO maintenance mode: off|idle|periodic (default: idle)
+  RALPH_TODO_MAINTENANCE_EVERY Run interval for maintenance in periodic mode (default: 10)
   RALPH_HOME    Ralph installation directory (auto-detected)"
     ;;
   *)
@@ -264,6 +268,8 @@ MAX_RETRIES_ON_FAILURE="${MAX_RETRIES_ON_FAILURE:-1}"
 BACKOFF_MULTIPLIER="${BACKOFF_MULTIPLIER:-2}"
 RUN_BUDGET_WINDOW_SECONDS="${RUN_BUDGET_WINDOW_SECONDS:-3600}"
 MAX_RUNS_PER_WINDOW="${MAX_RUNS_PER_WINDOW:-30}"
+RALPH_TODO_MAINTENANCE_MODE="${RALPH_TODO_MAINTENANCE_MODE:-idle}"
+RALPH_TODO_MAINTENANCE_EVERY="${RALPH_TODO_MAINTENANCE_EVERY:-10}"
 
 if [[ ! "$RALPH_WT_MAX_LINES" =~ ^[0-9]+$ ]]; then
   RALPH_WT_MAX_LINES="40"
@@ -289,6 +295,16 @@ fi
 if [[ ! "$MAX_RUNS_PER_WINDOW" =~ ^[0-9]+$ ]]; then
   MAX_RUNS_PER_WINDOW="30"
 fi
+if [[ ! "$RALPH_TODO_MAINTENANCE_EVERY" =~ ^[0-9]+$ ]] || [[ "$RALPH_TODO_MAINTENANCE_EVERY" -lt 1 ]]; then
+  RALPH_TODO_MAINTENANCE_EVERY="10"
+fi
+case "$RALPH_TODO_MAINTENANCE_MODE" in
+  off|idle|periodic) ;;
+  *)
+    echo "Invalid RALPH_TODO_MAINTENANCE_MODE: $RALPH_TODO_MAINTENANCE_MODE (allowed: off, idle, periodic)" >&2
+    exit 2
+    ;;
+esac
 
 COMMAND="${1:-help}"
 case "$COMMAND" in
@@ -399,6 +415,7 @@ fi
 COMMIT_POLICY_SCRIPT="$RALPH_HOME/scripts/validate_commit_policy.sh"
 RUN_PROTOCOL_SCRIPT="$RALPH_HOME/scripts/validate_run_protocol.sh"
 REPORT_RUNS_SCRIPT="$RALPH_HOME/scripts/report_runs.sh"
+ARCHIVE_TODO_SCRIPT="$RALPH_HOME/archive_todo.sh"
 [[ -f "$BASE_PROMPT_FILE" ]] || {
   echo "$MSG_PROMPT_NOT_FOUND $BASE_PROMPT_FILE"
   exit 1
@@ -550,6 +567,21 @@ todo_line_count() {
   else
     echo "0"
   fi
+}
+
+count_done_sections() {
+  local file="$1"
+  local count
+  if [[ ! -f "$file" ]]; then
+    echo "0"
+    return 0
+  fi
+  count="$(grep -Ec '^## .*DONE' "$file" || true)"
+  if [[ -z "$count" || ! "$count" =~ ^[0-9]+$ ]]; then
+    echo "0"
+    return 0
+  fi
+  echo "$count"
 }
 
 first_open_task_excerpt() {
@@ -864,6 +896,46 @@ run_codex() {
   "${codex_cmd[@]}" >> "$log_file" 2>&1
 }
 
+maintenance_ran=0
+maintenance_seconds=0
+maintenance_sections_moved=0
+
+run_todo_maintenance() {
+  local maintenance_log_file="$1"
+  local started_epoch
+  local finished_epoch
+  local done_before
+  local done_after
+  local moved_sections
+
+  maintenance_ran=0
+  maintenance_seconds=0
+  maintenance_sections_moved=0
+
+  if [[ ! -x "$ARCHIVE_TODO_SCRIPT" ]]; then
+    return 1
+  fi
+
+  started_epoch="$(date +%s)"
+  done_before="$(count_done_sections "$TODO_FILE")"
+  if ! "$ARCHIVE_TODO_SCRIPT" "$TODO_FILE" "$TODO_ARCHIVE_FILE" >> "$maintenance_log_file" 2>&1; then
+    finished_epoch="$(date +%s)"
+    maintenance_ran=1
+    maintenance_seconds=$((finished_epoch - started_epoch))
+    return 1
+  fi
+  finished_epoch="$(date +%s)"
+  done_after="$(count_done_sections "$TODO_FILE")"
+  moved_sections=$((done_before - done_after))
+  if (( moved_sections < 0 )); then
+    moved_sections=0
+  fi
+  maintenance_ran=1
+  maintenance_seconds=$((finished_epoch - started_epoch))
+  maintenance_sections_moved="$moved_sections"
+  return 0
+}
+
 trap 'echo "$MSG_STOPPED"; notify normal "$MSG_STOPPED"; exit 130' INT TERM
 
 run_count=0
@@ -954,6 +1026,16 @@ while true; do
   run_dir="$RUNS_DIR/$ts-$run_count"
   mkdir -p "$run_dir"
   log_file="$run_dir/stdout.log"
+  maintenance_log_file="$run_dir/maintenance.log"
+  maintenance_ran=0
+  maintenance_seconds=0
+  maintenance_sections_moved=0
+
+  if [[ "$RALPH_TODO_MAINTENANCE_MODE" == "periodic" ]] && (( run_count % RALPH_TODO_MAINTENANCE_EVERY == 0 )); then
+    if ! run_todo_maintenance "$maintenance_log_file"; then
+      echo "[$(date +'%F %T')] warning: TODO maintenance failed (mode=periodic)" >> "$log_file"
+    fi
+  fi
 
   ln -sfn "$run_dir" "$LOG_DIR/latest"
 
@@ -1205,6 +1287,11 @@ while true; do
     if tail -n 120 "$log_file" | grep -Eq "^[[:space:]]*${MSG_NO_TASKS_PATTERN}[[:space:]]*$"; then
       status="$MSG_IDLE"
       no_tasks_detected=1
+      if [[ "$RALPH_TODO_MAINTENANCE_MODE" == "idle" ]]; then
+        if ! run_todo_maintenance "$maintenance_log_file"; then
+          echo "[$(date +'%F %T')] warning: TODO maintenance failed (mode=idle)" >> "$log_file"
+        fi
+      fi
     elif tail -n 400 "$log_file" | grep -Eqi "need.*(decision|your decision)|how would you like to proceed|Potrzebuję decyzji"; then
       status="$MSG_NEEDS_DECISION"
       guidance_detected=1
@@ -1227,6 +1314,11 @@ while true; do
     tail -n 40 "$log_file" || true
     notify critical "Run #$run_count $MSG_FAILED (exit $exit_code)"
   fi
+
+  echo "maintenance_mode=$RALPH_TODO_MAINTENANCE_MODE" >> "$run_dir/meta.txt"
+  echo "maintenance_ran=$maintenance_ran" >> "$run_dir/meta.txt"
+  echo "maintenance_seconds=$maintenance_seconds" >> "$run_dir/meta.txt"
+  echo "maintenance_sections_moved=$maintenance_sections_moved" >> "$run_dir/meta.txt"
 
   if [[ "$RALPH_MODE" == "single" ]]; then
     if [[ $no_tasks_detected -eq 1 || $guidance_detected -eq 1 ]]; then

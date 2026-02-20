@@ -113,6 +113,8 @@ All configuration is via environment variables:
 | `BACKOFF_MULTIPLIER` | `2` | Multiplier for retry backoff |
 | `RUN_BUDGET_WINDOW_SECONDS` | `3600` | Run budget window size in seconds |
 | `MAX_RUNS_PER_WINDOW` | `30` | Maximum runs allowed in one budget window |
+| `RALPH_TODO_MAINTENANCE_MODE` | `idle` | TODO maintenance mode: `off`, `idle`, `periodic` |
+| `RALPH_TODO_MAINTENANCE_EVERY` | `10` | Run interval for maintenance in `periodic` mode |
 | `BASE_PROMPT_FILE` | `prompts/{lang}.md` | Override agent prompt file |
 
 Example:
@@ -156,7 +158,14 @@ Runtime observability:
   - `failure_class`, `retry_count`, `stuck_timeout_hit`,
   - `policy_violation`, `policy_reason`, `protocol_violation`, `protocol_reason`,
   - `context_hash`, `prompt_hash`, `prompt_drift`, `drift_reason`,
+  - `maintenance_mode`, `maintenance_ran`, `maintenance_seconds`, `maintenance_sections_moved`,
   - `test_seconds`, `duration_seconds`.
+
+TODO maintenance modes:
+
+- `off`: wrapper does not run TODO maintenance.
+- `idle` (default): wrapper runs maintenance only when the agent reports `NO TASKS`.
+- `periodic`: wrapper runs maintenance every `RALPH_TODO_MAINTENANCE_EVERY` runs.
 
 ## Prompt Context Order
 
@@ -227,8 +236,8 @@ When the agent completes a task, it marks the section as DONE:
 ## ~~1. Add user authentication~~ DONE (2026-02-12 14:30:00)
 ```
 
-DONE sections are automatically moved to `tasks/TODO_ARCHIVE.md` at the start
-of each run.
+DONE sections are moved to `tasks/TODO_ARCHIVE.md` by wrapper maintenance
+according to `RALPH_TODO_MAINTENANCE_MODE`.
 
 ### Subsections
 

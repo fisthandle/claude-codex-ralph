@@ -5,7 +5,6 @@ ROOT_DIR="${ROOT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 TASKS_DIR="${TASKS_DIR:-$ROOT_DIR/tasks}"
 TODO_FILE="${1:-$TASKS_DIR/TODO.md}"
 ARCHIVE_FILE="${2:-$TASKS_DIR/TODO_ARCHIVE.md}"
-MAX_LINES="${TODO_ARCHIVE_MAX_LINES:-800}"
 
 mkdir -p "$(dirname "$TODO_FILE")" "$(dirname "$ARCHIVE_FILE")"
 if [[ ! -f "$TODO_FILE" ]]; then
@@ -23,10 +22,9 @@ if [[ ! -f "$ARCHIVE_FILE" ]]; then
   fi
 fi
 
-line_count="$(wc -l < "$TODO_FILE")"
-if (( line_count <= MAX_LINES )); then
-  echo "TODO has $line_count lines (<= $MAX_LINES). Nothing to archive."
-  exit 0
+done_sections_before="$(grep -Ec '^## .*DONE' "$TODO_FILE" || true)"
+if [[ -z "$done_sections_before" || ! "$done_sections_before" =~ ^[0-9]+$ ]]; then
+  done_sections_before=0
 fi
 
 tmp_todo="$(mktemp)"
@@ -89,5 +87,14 @@ END {
 mv "$tmp_todo" "$TODO_FILE"
 mv "$tmp_archive" "$ARCHIVE_FILE"
 
-new_line_count="$(wc -l < "$TODO_FILE")"
-echo "Archived DONE sections. TODO lines: $line_count -> $new_line_count"
+done_sections_after="$(grep -Ec '^## .*DONE' "$TODO_FILE" || true)"
+if [[ -z "$done_sections_after" || ! "$done_sections_after" =~ ^[0-9]+$ ]]; then
+  done_sections_after=0
+fi
+
+sections_moved=$((done_sections_before - done_sections_after))
+if (( sections_moved < 0 )); then
+  sections_moved=0
+fi
+
+echo "Archived DONE sections (sections_moved=$sections_moved)"

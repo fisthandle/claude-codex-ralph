@@ -30,19 +30,9 @@ ALGORITHM (SINGLE TASK)
    - Files may change in the background — ignore, it is another agent.
    - Read only relevant sections; do not dump large `tasks/*.md` fragments into output.
 
-2. Maintenance (always on start):
-   - ALWAYS move all DONE sections from tasks/TODO.md to tasks/TODO_ARCHIVE.md (regardless of line count).
-   - A DONE section = header contains the token `DONE` (optionally with a timestamp), e.g. `## ~~N. Title~~ DONE (2026-02-12 10:12:33)`.
-   - The move to TODO_ARCHIVE must be 1:1: no shortening, no paraphrasing, no removing code blocks/diffs.
-   - Preserve the entire header and body of each DONE section (including timestamp) exactly as in TODO.md.
-   - DONE.md > 800 lines → compress oldest entries by priority:
-     * first shorten "Validation" (usually the most repetitive);
-     * then remove trivial "Lessons/insights";
-     * finally shorten "What was done" to 1-2 sentences.
-   - Test normalization in DONE.md:
-     * if `scripts/test.sh all` is green, write: "Tests: all OK (scripts/test.sh all)";
-     * do not then separately list `unit/smoke/e2e` and assertion counts.
-   - If you only did maintenance in `tasks/*` → save locally and end session (no commit/push).
+2. Maintenance:
+   - Ralph wrapper handles maintenance of `tasks/TODO.md` and `tasks/TODO_ARCHIVE.md`.
+   - Do not run manual maintenance at run start unless the task explicitly requires it.
 
 3. Pick the first task NOT marked as DONE.
    - No tasks → print "NO TASKS" and end the session.
@@ -86,7 +76,7 @@ ALGORITHM (SINGLE TASK)
      * "What was done": max 1-2 sentences;
      * "Tests": prefer 1 line "all OK";
      * "Lessons/insights": only when genuinely new (max 1 line).
-   - After marking DONE immediately move all DONE sections from tasks/TODO.md to tasks/TODO_ARCHIVE.md (1:1, no content changes), so only open tasks remain in TODO.
+   - Do not manually move DONE sections to `tasks/TODO_ARCHIVE.md` (handled by wrapper).
    - This is the loop's local state; `tasks/*.md` files are NOT part of the commit.
 
 8. Git:

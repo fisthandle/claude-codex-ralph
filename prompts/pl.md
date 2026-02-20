@@ -30,19 +30,9 @@ ALGORYTM (JEDNO ZADANIE)
    - Pliki mogą się zmienić w tle — ignoruj, to inny agent.
    - Czytaj tylko potrzebne sekcje; nie dumpuj duzych fragmentow `tasks/*.md` do outputu.
 
-2. Maintenance (zawsze na starcie):
-   - ZAWSZE przenies wszystkie sekcje DONE z tasks/TODO.md do tasks/TODO_ARCHIVE.md (niezaleznie od liczby linii).
-   - Sekcja DONE = naglowek zawiera token `DONE` (opcjonalnie z timestampem), np. `## ~~N. Tytul~~ DONE (2026-02-12 10:12:33)`.
-   - Przeniesienie do TODO_ARCHIVE ma byc 1:1: bez skracania, bez parafrazy, bez usuwania blokow kodu/diffow.
-   - Zachowaj caly naglowek i cala tresc sekcji DONE (w tym znacznik czasu) dokladnie tak, jak w TODO.md.
-   - DONE.md > 800 linii → skompresuj najstarsze wpisy wedlug priorytetu:
-     * najpierw skroc "Walidacja" (to zwykle najbardziej powtarzalne);
-     * potem usun banalne "Lekcje/wnioski";
-     * na koniec skroc "Co zrobiono" do 1-2 zdan.
-   - Normalizacja testow w DONE.md:
-     * jesli `scripts/test.sh all` jest green, zapisuj: "Testy: wszystkie OK (scripts/test.sh all)";
-     * nie powtarzaj wtedy osobno `unit/smoke/e2e` i licznikow asercji.
-   - Jeśli zrobiłeś maintenance tylko w `tasks/*` → zapisz lokalnie i zakończ sesję (bez commita/pusha).
+2. Maintenance:
+   - Maintenance `tasks/TODO.md` i `tasks/TODO_ARCHIVE.md` wykonuje wrapper Ralph.
+   - Nie rób ręcznego maintenance na starcie runu, chyba że task explicitnie tego wymaga.
 
 3. Wybierz pierwsze zadanie NIE oznaczone jako DONE.
    - Brak zadań → wypisz "BRAK ZADAŃ" i zakończ sesję.
@@ -86,7 +76,7 @@ ALGORYTM (JEDNO ZADANIE)
      * "Co zrobiono": max 1-2 zdania;
      * "Testy": preferuj 1 linie "wszystkie OK";
      * "Lekcje/wnioski": tylko gdy sa realnie nowe (max 1 linia).
-   - Po oznaczeniu DONE natychmiast przenies wszystkie sekcje DONE z tasks/TODO.md do tasks/TODO_ARCHIVE.md (1:1, bez zmian tresci), aby w TODO zostaly tylko otwarte taski.
+   - Nie przenoś ręcznie sekcji DONE do `tasks/TODO_ARCHIVE.md` (obsługuje to wrapper).
    - To jest stan lokalny pętli; pliki `tasks/*.md` NIE są częścią commita.
 
 8. Git:
