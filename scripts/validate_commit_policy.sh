@@ -35,7 +35,7 @@ while IFS= read -r commit; do
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     case "$path" in
-      tasks/*|*.pid|*.log|.claude/*)
+      tasks/logs/*|tasks/agent.stop|tasks/agent.safe-stop|tasks/agent.restart|*.pid|*.log|.claude/*)
         echo "policy_violation: forbidden runtime/local path committed: $path"
         exit 1
         ;;
