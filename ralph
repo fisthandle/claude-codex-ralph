@@ -12,8 +12,23 @@ _script_dir() {
   cd -P "$(dirname "$src")" && pwd
 }
 
+_script_path() {
+  local src="${BASH_SOURCE[0]}"
+  while [ -L "$src" ]; do
+    local dir
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  if [[ "$src" != /* ]]; then
+    src="$(cd -P "$(dirname "$src")" && pwd)/$(basename "$src")"
+  fi
+  printf '%s\n' "$src"
+}
+
 RALPH_HOME="${RALPH_HOME:-$(_script_dir)}"
 RALPH_LANG="${RALPH_LANG:-pl}"
+SCRIPT_PATH="$(_script_path)"
 
 case "$RALPH_LANG" in
   pl)
@@ -40,6 +55,7 @@ case "$RALPH_LANG" in
     MSG_ERROR="blad"
     MSG_SINGLE_STOPPED="zatrzymano: tryb single"
     MSG_RESTART_RELOAD="restart: przeladowanie w tym terminalu"
+    MSG_RELOAD_SCRIPT_CHANGE="wykryto nowa wersje ralph, restartuje proces"
     MSG_NO_TASKS_PATTERN='BRAK ZADA[ŃN]'
     MSG_UNKNOWN_CMD="Nieznana komenda:"
     MSG_IDLE_PAUSE="przerwa"
@@ -59,6 +75,7 @@ case "$RALPH_LANG" in
   ralph restart <pid>  - przeladuj aktywny proces (po PID)
   ralph stop           - przelacz stop (ustaw/usun tasks/agent.stop)
   ralph safe-stop      - przelacz safe-stop (ustaw/usun tasks/agent.safe-stop)
+  ralph completion bash - wypisz skrypt autouzupelniania Bash
   ralph help           - pokaz to menu
 
 Zmienne srodowiskowe:
@@ -106,6 +123,7 @@ Zmienne srodowiskowe:
     MSG_ERROR="error"
     MSG_SINGLE_STOPPED="stopped: single mode"
     MSG_RESTART_RELOAD="restart: reloading in this terminal"
+    MSG_RELOAD_SCRIPT_CHANGE="detected a newer ralph script version, restarting process"
     MSG_NO_TASKS_PATTERN='NO TASKS'
     MSG_UNKNOWN_CMD="Unknown command:"
     MSG_IDLE_PAUSE="pause"
@@ -125,6 +143,7 @@ Zmienne srodowiskowe:
   ralph restart <pid>  - reload active process (by PID)
   ralph stop           - toggle stop (set/remove tasks/agent.stop)
   ralph safe-stop      - toggle safe-stop (set/remove tasks/agent.safe-stop)
+  ralph completion bash - print Bash completion script
   ralph help           - show this menu
 
 Environment:
@@ -153,6 +172,61 @@ Environment:
     exit 2
     ;;
 esac
+
+print_bash_completion() {
+  cat <<'EOF'
+_ralph_completion() {
+  local cur prev command pids
+  COMPREPLY=()
+
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev=""
+  if [[ "$COMP_CWORD" -gt 0 ]]; then
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+  fi
+  command="${COMP_WORDS[1]}"
+
+  if [[ "$COMP_CWORD" -eq 1 ]]; then
+    COMPREPLY=( $(compgen -W "run restart stop safe-stop help completion" -- "$cur") )
+    return 0
+  fi
+
+  if [[ "$command" == "completion" && "$COMP_CWORD" -eq 2 ]]; then
+    COMPREPLY=( $(compgen -W "bash" -- "$cur") )
+    return 0
+  fi
+
+  if [[ "$command" == "restart" && "$COMP_CWORD" -eq 2 ]]; then
+    pids="$(pgrep -f '[/]ralph run' 2>/dev/null | tr '\n' ' ')"
+    COMPREPLY=( $(compgen -W "$pids" -- "$cur") )
+    return 0
+  fi
+
+  if [[ "$command" == "help" || "$command" == "run" || "$command" == "stop" || "$command" == "safe-stop" ]]; then
+    return 0
+  fi
+
+  COMPREPLY=( $(compgen -W "run restart stop safe-stop help completion" -- "$cur") )
+}
+
+complete -o default -F _ralph_completion ralph
+EOF
+}
+
+EARLY_COMMAND="${1:-help}"
+if [[ "$EARLY_COMMAND" == "completion" || "$EARLY_COMMAND" == "completions" ]]; then
+  completion_shell="${2:-bash}"
+  case "$completion_shell" in
+    bash)
+      print_bash_completion
+      exit 0
+      ;;
+    *)
+      echo "Unsupported completion shell: $completion_shell (allowed: bash)" >&2
+      exit 2
+      ;;
+  esac
+fi
 
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || {
   echo "$MSG_GIT_ONLY"
@@ -286,7 +360,7 @@ case "$COMMAND" in
     ;;
   *)
     echo "$MSG_UNKNOWN_CMD $COMMAND"
-    echo "Usage: ralph [run|restart <pid>|stop|safe-stop|help]"
+    echo "Usage: ralph [run|restart <pid>|stop|safe-stop|completion bash|help]"
     exit 2
     ;;
 esac
@@ -353,6 +427,7 @@ file_hash() {
     echo "-"
   fi
 }
+SCRIPT_START_HASH="$(file_hash "$SCRIPT_PATH")"
 
 echo "$MSG_STARTED: repo=$(basename "$ROOT_DIR"), pid=$$, mode=$RALPH_MODE, logs=$LOG_DIR, stop=$STOP_FILE"
 
@@ -388,7 +463,19 @@ restart_self_if_requested() {
     rm -f "$RESTART_FILE"
     rm -f "$STOP_FILE"
     echo "$MSG_RESTART_RELOAD (pid=$requested_pid)"
-    exec "$0" run
+    exec "$SCRIPT_PATH" run
+  fi
+}
+
+restart_self_if_script_changed() {
+  local current_hash
+  current_hash="$(file_hash "$SCRIPT_PATH")"
+  if [[ "$SCRIPT_START_HASH" == "-" || "$current_hash" == "-" ]]; then
+    return
+  fi
+  if [[ "$current_hash" != "$SCRIPT_START_HASH" ]]; then
+    echo "[$(date +'%F %T')] $MSG_RELOAD_SCRIPT_CHANGE"
+    exec "$SCRIPT_PATH" run
   fi
 }
 
@@ -839,6 +926,7 @@ sync_pull_once
 
 while true; do
   restart_self_if_requested
+  restart_self_if_script_changed
   [[ -f "$SAFE_STOP_FILE" ]] && {
     push_pending_commits
     echo "Safe-stop file detected."
@@ -1156,6 +1244,7 @@ while true; do
     exit 0
   }
   restart_self_if_requested
+  restart_self_if_script_changed
   if [[ $guidance_detected -eq 1 ]]; then
     sleep 1
   elif [[ $no_tasks_detected -eq 1 ]]; then
