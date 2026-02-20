@@ -397,6 +397,7 @@ if command -v timeout >/dev/null 2>&1; then
   HAS_TIMEOUT=1
 fi
 COMMIT_POLICY_SCRIPT="$RALPH_HOME/scripts/validate_commit_policy.sh"
+RUN_PROTOCOL_SCRIPT="$RALPH_HOME/scripts/validate_run_protocol.sh"
 REPORT_RUNS_SCRIPT="$RALPH_HOME/scripts/report_runs.sh"
 [[ -f "$BASE_PROMPT_FILE" ]] || {
   echo "$MSG_PROMPT_NOT_FOUND $BASE_PROMPT_FILE"
@@ -1069,6 +1070,8 @@ while true; do
   failure_class="none"
   infra_sig="none"
   policy_violation=0
+  protocol_violation=0
+  protocol_reason="none"
   last_attempt_log=""
 
   set +e
@@ -1126,6 +1129,19 @@ while true; do
     policy_reason="script_unavailable"
   fi
 
+  if [[ -x "$RUN_PROTOCOL_SCRIPT" ]]; then
+    if ! "$RUN_PROTOCOL_SCRIPT" "$log_file" "$ROOT_DIR" > "$run_dir/protocol_check.log" 2>&1; then
+      protocol_violation=1
+      protocol_reason="$(tail -n 1 "$run_dir/protocol_check.log" | tr -d '\r' || true)"
+      [[ -z "$protocol_reason" ]] && protocol_reason="protocol_violation: protocol_check_failed"
+      policy_violation=1
+      policy_reason="$protocol_reason"
+      touch "$SAFE_STOP_FILE"
+    fi
+  else
+    protocol_reason="script_unavailable"
+  fi
+
   if [[ "$policy_violation" -eq 1 && "$exit_code" -eq 0 ]]; then
     exit_code=50
   fi
@@ -1167,6 +1183,8 @@ while true; do
   echo "infra_failure_signature=$infra_sig" >> "$run_dir/meta.txt"
   echo "policy_violation=$policy_violation" >> "$run_dir/meta.txt"
   echo "policy_reason=$policy_reason" >> "$run_dir/meta.txt"
+  echo "protocol_violation=$protocol_violation" >> "$run_dir/meta.txt"
+  echo "protocol_reason=$protocol_reason" >> "$run_dir/meta.txt"
   echo "stuck_timeout_hit=$stuck_timeout_hit" >> "$run_dir/meta.txt"
   echo "stop_reason=$stop_reason" >> "$run_dir/meta.txt"
   echo "stopped_by=$stopped_by" >> "$run_dir/meta.txt"

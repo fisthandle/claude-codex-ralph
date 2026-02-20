@@ -154,6 +154,7 @@ Runtime observability:
 - `tasks/logs/runs/*/meta.txt` includes:
   - `reasoning_requested`, `reasoning_selected`, `reasoning_reason`,
   - `failure_class`, `retry_count`, `stuck_timeout_hit`,
+  - `policy_violation`, `policy_reason`, `protocol_violation`, `protocol_reason`,
   - `context_hash`, `prompt_hash`, `prompt_drift`, `drift_reason`,
   - `test_seconds`, `duration_seconds`.
 
@@ -202,6 +203,7 @@ See details: `docs/benchmarks.md`.
 | `benchmarks/*` | Eval harness and baseline gate |
 | `scripts/report_runs.sh` | Aggregate run telemetry into daily JSON report |
 | `scripts/validate_commit_policy.sh` | Post-run commit policy check |
+| `scripts/validate_run_protocol.sh` | Post-run protocol check (`napkin-first`, `spawn_agent` announcement) |
 | `skills/todo/SKILL.md` | Claude Code skill for writing structured tasks |
 | `skills/php-*/SKILL.md` | PHP implementation workflow skills |
 
@@ -264,7 +266,8 @@ tasks/
         stdout.log     # agent output
         prompt.txt     # prompt sent to agent
         policy_check.log # commit policy diagnostics
-        meta.txt       # run metadata (reasoning, failure class, drift, retries, test_seconds, duration_seconds)
+        protocol_check.log # protocol diagnostics (`napkin-first`, subagent announcements)
+        meta.txt       # run metadata (reasoning, failure class, policy/protocol status, drift, retries, test_seconds, duration_seconds)
 ```
 
 ## License
