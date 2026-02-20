@@ -712,11 +712,11 @@ classify_failure() {
     echo "infra_network"
     return 0
   fi
-  if grep -Eqi 'lint|phpstan|eslint|flake8|pylint|style check|format check' "$log_file"; then
+  if grep -aEqi 'lint|phpstan|eslint|flake8|pylint|style check|format check' "$log_file"; then
     echo "lint_failure"
     return 0
   fi
-  if grep -Eqi 'tests? failed|test suite failed|assertion|FAILURES!|failing test|\\bFAILED\\b|\\bfail\\b' "$log_file"; then
+  if grep -aEqi 'tests? failed|test suite failed|assertion|FAILURES!|failing test|\\bFAILED\\b|\\bfail\\b' "$log_file"; then
     echo "test_failure"
     return 0
   fi
@@ -1049,7 +1049,7 @@ while true; do
   fi
   [[ -n "$last_attempt_log" && -f "$last_attempt_log" ]] && rm -f "$last_attempt_log"
 
-  test_seconds="$(grep -Eo 'RALPH_TEST_SECONDS=[0-9]+' "$log_file" | tail -n 1 | cut -d= -f2 || true)"
+  test_seconds="$(grep -aEo 'RALPH_TEST_SECONDS=[0-9]+' "$log_file" | tail -n 1 | cut -d= -f2 || true)"
   if [[ -z "$test_seconds" ]]; then
     test_seconds="unknown"
   fi
