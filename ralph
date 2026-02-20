@@ -1063,15 +1063,29 @@ while true; do
   mkdir -p "$run_dir"
   log_file="$run_dir/stdout.log"
   maintenance_log_file="$run_dir/maintenance.log"
+  run_started_epoch="$(date +%s)"
+  phase_prepare_seconds=0
+  phase_agent_seconds=0
+  phase_policy_seconds=0
+  phase_maintenance_seconds=0
+  phase_finalize_seconds=0
   maintenance_ran=0
   maintenance_seconds=0
   maintenance_sections_moved=0
 
   if [[ "$RALPH_TODO_MAINTENANCE_MODE" == "periodic" ]] && (( run_count % RALPH_TODO_MAINTENANCE_EVERY == 0 )); then
+    maintenance_call_started_epoch="$(date +%s)"
     if ! run_todo_maintenance "$maintenance_log_file"; then
       echo "[$(date +'%F %T')] warning: TODO maintenance failed (mode=periodic)" >> "$log_file"
     fi
+    maintenance_call_finished_epoch="$(date +%s)"
+    maintenance_call_seconds=$((maintenance_call_finished_epoch - maintenance_call_started_epoch))
+    if (( maintenance_call_seconds < 0 )); then
+      maintenance_call_seconds=0
+    fi
+    phase_maintenance_seconds=$((phase_maintenance_seconds + maintenance_call_seconds))
   fi
+  phase_prepare_start_epoch="$(date +%s)"
 
   ln -sfn "$run_dir" "$LOG_DIR/latest"
 
@@ -1180,7 +1194,6 @@ while true; do
   archive_before="$(file_hash "$TODO_ARCHIVE_FILE")"
   head_before="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
 
-  run_started_epoch="$(date +%s)"
   : > "$log_file"
   attempt=0
   retry_count=0
@@ -1193,6 +1206,11 @@ while true; do
   todo_duplicates_count=0
   todo_duplicates_warning=0
   last_attempt_log=""
+  phase_agent_start_epoch="$(date +%s)"
+  phase_prepare_seconds=$((phase_agent_start_epoch - phase_prepare_start_epoch))
+  if (( phase_prepare_seconds < 0 )); then
+    phase_prepare_seconds=0
+  fi
 
   todo_duplicates_count="$(run_todo_duplicate_check "$run_dir/todo_duplicates.log")"
   if [[ "$todo_duplicates_count" -gt 0 ]]; then
@@ -1252,7 +1270,12 @@ while true; do
   else
     echo "[$(date +'%F %T')] abort: duplicate TODO sections detected and RALPH_FAIL_ON_TODO_DUPLICATES=1" >> "$log_file"
   fi
-  run_finished_epoch="$(date +%s)"
+  phase_agent_end_epoch="$(date +%s)"
+  phase_agent_seconds=$((phase_agent_end_epoch - phase_agent_start_epoch))
+  if (( phase_agent_seconds < 0 )); then
+    phase_agent_seconds=0
+  fi
+  phase_policy_start_epoch="$phase_agent_end_epoch"
   rm -f "$combined"
 
   head_after="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
@@ -1279,6 +1302,11 @@ while true; do
     fi
   else
     protocol_reason="script_unavailable"
+  fi
+  phase_policy_end_epoch="$(date +%s)"
+  phase_policy_seconds=$((phase_policy_end_epoch - phase_policy_start_epoch))
+  if (( phase_policy_seconds < 0 )); then
+    phase_policy_seconds=0
   fi
 
   if [[ "$policy_violation" -eq 1 && "$exit_code" -eq 0 ]]; then
@@ -1315,46 +1343,44 @@ while true; do
     stopped_by="operator"
   fi
 
-  echo "exit_code=$exit_code" >> "$run_dir/meta.txt"
-  echo "attempt_count=$attempt" >> "$run_dir/meta.txt"
-  echo "retry_count=$retry_count" >> "$run_dir/meta.txt"
-  echo "failure_class=$failure_class" >> "$run_dir/meta.txt"
-  echo "infra_failure_signature=$infra_sig" >> "$run_dir/meta.txt"
-  echo "policy_violation=$policy_violation" >> "$run_dir/meta.txt"
-  echo "policy_reason=$policy_reason" >> "$run_dir/meta.txt"
-  echo "protocol_violation=$protocol_violation" >> "$run_dir/meta.txt"
-  echo "protocol_reason=$protocol_reason" >> "$run_dir/meta.txt"
-  echo "todo_duplicates_count=$todo_duplicates_count" >> "$run_dir/meta.txt"
-  echo "todo_duplicates_warning=$todo_duplicates_warning" >> "$run_dir/meta.txt"
-  echo "todo_duplicates_fail_on_detect=$RALPH_FAIL_ON_TODO_DUPLICATES" >> "$run_dir/meta.txt"
-  echo "stuck_timeout_hit=$stuck_timeout_hit" >> "$run_dir/meta.txt"
-  echo "stop_reason=$stop_reason" >> "$run_dir/meta.txt"
-  echo "stopped_by=$stopped_by" >> "$run_dir/meta.txt"
-  echo "test_seconds=$test_seconds" >> "$run_dir/meta.txt"
-  run_duration_seconds=$((run_finished_epoch - run_started_epoch))
-
-  echo "duration_seconds=$run_duration_seconds" >> "$run_dir/meta.txt"
-  echo "finished=$(date +'%F %T')" >> "$run_dir/meta.txt"
-  if [[ -x "$REPORT_RUNS_SCRIPT" ]]; then
-    "$REPORT_RUNS_SCRIPT" --date "$(date +%F)" >/dev/null 2>&1 || true
-  fi
-
   no_tasks_detected=0
   guidance_detected=0
-  if [[ $exit_code -eq 0 ]]; then
-    total_ok=$((total_ok + 1))
-    status="$MSG_RUN_DONE"
+  if [[ "$exit_code" -eq 0 ]]; then
     if tail -n 120 "$log_file" | grep -Eq "^[[:space:]]*${MSG_NO_TASKS_PATTERN}[[:space:]]*$"; then
-      status="$MSG_IDLE"
       no_tasks_detected=1
       if [[ "$RALPH_TODO_MAINTENANCE_MODE" == "idle" ]]; then
+        maintenance_call_started_epoch="$(date +%s)"
         if ! run_todo_maintenance "$maintenance_log_file"; then
           echo "[$(date +'%F %T')] warning: TODO maintenance failed (mode=idle)" >> "$log_file"
         fi
+        maintenance_call_finished_epoch="$(date +%s)"
+        maintenance_call_seconds=$((maintenance_call_finished_epoch - maintenance_call_started_epoch))
+        if (( maintenance_call_seconds < 0 )); then
+          maintenance_call_seconds=0
+        fi
+        phase_maintenance_seconds=$((phase_maintenance_seconds + maintenance_call_seconds))
       fi
     elif tail -n 400 "$log_file" | grep -Eqi "need.*(decision|your decision)|how would you like to proceed|Potrzebuję decyzji"; then
-      status="$MSG_NEEDS_DECISION"
       guidance_detected=1
+    fi
+  fi
+
+  run_finished_epoch="$(date +%s)"
+  run_duration_seconds=$((run_finished_epoch - run_started_epoch))
+  if (( run_duration_seconds < 0 )); then
+    run_duration_seconds=0
+  fi
+  phase_finalize_seconds=$((run_duration_seconds - phase_prepare_seconds - phase_agent_seconds - phase_policy_seconds - phase_maintenance_seconds))
+  if (( phase_finalize_seconds < 0 )); then
+    phase_finalize_seconds=0
+  fi
+  if [[ $exit_code -eq 0 ]]; then
+    total_ok=$((total_ok + 1))
+    status="$MSG_RUN_DONE"
+    if [[ $no_tasks_detected -eq 1 ]]; then
+      status="$MSG_IDLE"
+    elif [[ $guidance_detected -eq 1 ]]; then
+      status="$MSG_NEEDS_DECISION"
     elif [[ "$todo_before" != "$todo_after" || "$done_before" != "$done_after" || "$archive_before" != "$archive_after" ]]; then
       status="DONE in $(format_duration_compact "$run_duration_seconds")"
     fi
@@ -1375,10 +1401,36 @@ while true; do
     notify critical "Run #$run_count $MSG_FAILED (exit $exit_code)"
   fi
 
+  echo "exit_code=$exit_code" >> "$run_dir/meta.txt"
+  echo "attempt_count=$attempt" >> "$run_dir/meta.txt"
+  echo "retry_count=$retry_count" >> "$run_dir/meta.txt"
+  echo "failure_class=$failure_class" >> "$run_dir/meta.txt"
+  echo "infra_failure_signature=$infra_sig" >> "$run_dir/meta.txt"
+  echo "policy_violation=$policy_violation" >> "$run_dir/meta.txt"
+  echo "policy_reason=$policy_reason" >> "$run_dir/meta.txt"
+  echo "protocol_violation=$protocol_violation" >> "$run_dir/meta.txt"
+  echo "protocol_reason=$protocol_reason" >> "$run_dir/meta.txt"
+  echo "todo_duplicates_count=$todo_duplicates_count" >> "$run_dir/meta.txt"
+  echo "todo_duplicates_warning=$todo_duplicates_warning" >> "$run_dir/meta.txt"
+  echo "todo_duplicates_fail_on_detect=$RALPH_FAIL_ON_TODO_DUPLICATES" >> "$run_dir/meta.txt"
+  echo "stuck_timeout_hit=$stuck_timeout_hit" >> "$run_dir/meta.txt"
+  echo "stop_reason=$stop_reason" >> "$run_dir/meta.txt"
+  echo "stopped_by=$stopped_by" >> "$run_dir/meta.txt"
+  echo "test_seconds=$test_seconds" >> "$run_dir/meta.txt"
+  echo "phase_prepare_seconds=$phase_prepare_seconds" >> "$run_dir/meta.txt"
+  echo "phase_agent_seconds=$phase_agent_seconds" >> "$run_dir/meta.txt"
+  echo "phase_policy_seconds=$phase_policy_seconds" >> "$run_dir/meta.txt"
+  echo "phase_maintenance_seconds=$phase_maintenance_seconds" >> "$run_dir/meta.txt"
+  echo "phase_finalize_seconds=$phase_finalize_seconds" >> "$run_dir/meta.txt"
+  echo "duration_seconds=$run_duration_seconds" >> "$run_dir/meta.txt"
+  echo "finished=$(date +'%F %T')" >> "$run_dir/meta.txt"
   echo "maintenance_mode=$RALPH_TODO_MAINTENANCE_MODE" >> "$run_dir/meta.txt"
   echo "maintenance_ran=$maintenance_ran" >> "$run_dir/meta.txt"
   echo "maintenance_seconds=$maintenance_seconds" >> "$run_dir/meta.txt"
   echo "maintenance_sections_moved=$maintenance_sections_moved" >> "$run_dir/meta.txt"
+  if [[ -x "$REPORT_RUNS_SCRIPT" ]]; then
+    "$REPORT_RUNS_SCRIPT" --date "$(date +%F)" >/dev/null 2>&1 || true
+  fi
 
   if [[ "$RALPH_MODE" == "single" ]]; then
     if [[ $no_tasks_detected -eq 1 || $guidance_detected -eq 1 ]]; then
