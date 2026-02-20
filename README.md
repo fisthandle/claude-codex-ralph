@@ -77,7 +77,7 @@ All configuration is via environment variables:
 | `RALPH_LANG` | `pl` | Language: `pl`, `en` |
 | `RALPH_MODE` | `loop` | Mode: `loop` (keep going), `single` (one task then stop) |
 | `MODEL` | `gpt-5.3-codex` | AI model name passed to codex |
-| `REASONING` | `medium` | Model reasoning effort |
+| `REASONING` | `auto` | Reasoning mode: `auto`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh` |
 | `SLEEP_SECONDS` | `10` | Pause between runs (seconds) |
 | `IDLE_SLEEP_SECONDS` | `100` | Pause when no tasks found |
 | `ERROR_SLEEP_SECONDS` | `300` | Pause after a failed run |
@@ -95,6 +95,43 @@ Example:
 ```bash
 RALPH_LANG=en MODEL=o3 ralph run
 ```
+
+Reasoning policy:
+
+- `REASONING=auto` (default) selects:
+  - `medium` by default,
+  - `high` for migration/security/cross-cutting tasks,
+  - `xhigh` only after 2 repeated infra failures,
+  - `low` for docs/admin-only tasks.
+- If you set `REASONING=none|minimal|low|medium|high|xhigh`, Ralph does not override it.
+
+Examples:
+
+```bash
+REASONING=auto ralph run
+REASONING=high ralph run
+```
+
+Subagent policy:
+
+- Subagent rules are centralized in `ralph/CLAUDE.md` (`subag=auto`).
+- Wrapper policy:
+  - do not force subagents for simple 1-2 file fixes,
+  - use subagents for audits/multi-file research/repeated infra diagnosis,
+  - max 2 subagents, timeout 240s, max 1 retry,
+  - fallback to local execution if subagent is unavailable.
+
+## Prompt Context Order
+
+For each `ralph run` iteration, context files are loaded in this order:
+
+1. `$HOME/.claude/CLAUDE.md` (optional, user-global)
+2. `$RALPH_HOME/CLAUDE.md` (Ralph central policy)
+3. `<project-root>/CLAUDE.md` (project-specific policy)
+4. `prompts/{lang}.md` (runtime loop prompt)
+
+If `RALPH_INLINE_CLAUDE=1`, Ralph inlines these files directly into `prompt.txt`.
+Otherwise, it lists them under "Runtime context files".
 
 ## File structure
 
@@ -160,7 +197,7 @@ tasks/
       20260212-143000-1/
         stdout.log     # agent output
         prompt.txt     # prompt sent to agent
-        meta.txt       # run metadata (incl. test_seconds, reasoning, duration_seconds)
+        meta.txt       # run metadata (incl. reasoning_requested/selected/reason, test_seconds, duration_seconds)
 ```
 
 ## License
