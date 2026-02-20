@@ -115,6 +115,7 @@ All configuration is via environment variables:
 | `MAX_RUNS_PER_WINDOW` | `30` | Maximum runs allowed in one budget window |
 | `RALPH_TODO_MAINTENANCE_MODE` | `idle` | TODO maintenance mode: `off`, `idle`, `periodic` |
 | `RALPH_TODO_MAINTENANCE_EVERY` | `10` | Run interval for maintenance in `periodic` mode |
+| `RALPH_FAIL_ON_TODO_DUPLICATES` | `0` | Set to `1` to fail-fast when duplicate open TODO sections are detected |
 | `BASE_PROMPT_FILE` | `prompts/{lang}.md` | Override agent prompt file |
 
 Example:
@@ -157,6 +158,7 @@ Runtime observability:
   - `reasoning_requested`, `reasoning_selected`, `reasoning_reason`,
   - `failure_class`, `retry_count`, `stuck_timeout_hit`,
   - `policy_violation`, `policy_reason`, `protocol_violation`, `protocol_reason`,
+  - `todo_duplicates_count`, `todo_duplicates_warning`, `todo_duplicates_fail_on_detect`,
   - `context_hash`, `prompt_hash`, `prompt_drift`, `drift_reason`,
   - `maintenance_mode`, `maintenance_ran`, `maintenance_seconds`, `maintenance_sections_moved`,
   - `test_seconds`, `duration_seconds`.
@@ -210,6 +212,7 @@ See details: `docs/benchmarks.md`.
 | `prompts/en.md` | Agent prompt (English) |
 | `archive_todo.sh` | Utility: archive completed sections from TODO.md |
 | `benchmarks/*` | Eval harness and baseline gate |
+| `scripts/check_todo_duplicates.sh` | Detect duplicate open TODO sections by normalized title+content |
 | `scripts/report_runs.sh` | Aggregate run telemetry into daily JSON report |
 | `scripts/validate_commit_policy.sh` | Post-run commit policy check |
 | `scripts/validate_run_protocol.sh` | Post-run protocol check (`napkin-first`, `spawn_agent` announcement) |
