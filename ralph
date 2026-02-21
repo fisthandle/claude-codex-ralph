@@ -448,7 +448,7 @@ file_hash() {
 }
 SCRIPT_START_HASH="$(file_hash "$SCRIPT_PATH")"
 
-echo "$MSG_STARTED: repo=$(basename "$ROOT_DIR"), pid=$$, mode=$RALPH_MODE, logs=$LOG_DIR, stop=$STOP_FILE"
+echo "$MSG_STARTED: repo=$(basename "$ROOT_DIR"), pid=$$, mode=$RALPH_MODE, logs=$LOG_DIR, stop=$STOP_FILE, kill_all='kill -9 -$$'"
 
 notify() {
   notify-send -u "$1" "Ralph [$(basename "$ROOT_DIR")]" "$2" 2>/dev/null || true
