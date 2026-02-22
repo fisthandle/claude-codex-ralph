@@ -114,7 +114,7 @@ All configuration is via environment variables:
 | `RUN_BUDGET_WINDOW_SECONDS` | `3600` | Run budget window size in seconds |
 | `MAX_RUNS_PER_WINDOW` | `30` | Maximum runs allowed in one budget window |
 | `RALPH_TODO_MAINTENANCE_MODE` | `idle` | TODO maintenance mode: `off`, `idle`, `periodic` |
-| `RALPH_TODO_MAINTENANCE_EVERY` | `10` | Run interval for maintenance in `periodic` mode |
+| `RALPH_TODO_MAINTENANCE_EVERY` | `2` | Run interval for maintenance in `periodic` mode |
 | `RALPH_FAIL_ON_TODO_DUPLICATES` | `0` | Set to `1` to fail-fast when duplicate open TODO sections are detected |
 | `BASE_PROMPT_FILE` | `prompts/{lang}.md` | Override agent prompt file |
 
