@@ -506,7 +506,7 @@ if [[ -f "$PID_FILE" ]]; then
   fi
 fi
 echo "$$" > "$PID_FILE"
-trap cleanup_pid_file EXIT
+trap 'cleanup_pid_file; cleanup_step_monitor' EXIT
 
 sleep_with_dots() {
   local total="$1"
@@ -928,6 +928,117 @@ run_codex() {
   "${codex_cmd[@]}" >> "$log_file" 2>&1
 }
 
+# --- Step detection ---
+
+STEP_FILE=""
+STEP_TIMING_FILE=""
+STEP_MONITOR_PID=""
+
+cleanup_step_monitor() {
+  if [[ -n "$STEP_MONITOR_PID" ]]; then
+    kill "$STEP_MONITOR_PID" 2>/dev/null || true
+    wait "$STEP_MONITOR_PID" 2>/dev/null || true
+    STEP_MONITOR_PID=""
+  fi
+  [[ -n "$STEP_FILE" ]] && rm -f "$STEP_FILE"
+  [[ -n "$STEP_TIMING_FILE" ]] && rm -f "$STEP_TIMING_FILE"
+  STEP_FILE=""
+  STEP_TIMING_FILE=""
+}
+
+start_step_monitor() {
+  local watch_file="$1"
+  STEP_FILE="$(mktemp)"
+  STEP_TIMING_FILE="$(mktemp)"
+  local sf="$STEP_FILE"
+  local stf="$STEP_TIMING_FILE"
+  local verbose="$RALPH_VERBOSE"
+  echo "starting $(date +%s)" > "$sf"
+  touch "$watch_file"
+
+  tail -f "$watch_file" 2>/dev/null | (
+    current="starting"
+    step_start="$(date +%s)"
+
+    while IFS= read -r line; do
+      detected=""
+      case "$line" in
+        *'git add'*|*'git commit'*|*'commit -m'*) detected="committing" ;;
+        *phpunit*|*jest*|*pytest*|*vitest*|*'npm test'*|*'make test'*) detected="testing" ;;
+        *phpstan*|*eslint*|*flake8*|*prettier*|*phpcs*|*'make lint'*) detected="linting" ;;
+        *apply_patch*|*'Wrote to'*|*'Created file'*|*'Edited '*) detected="editing" ;;
+        *'Reading file'*|*'read_file'*|*'Searching'*) detected="reading" ;;
+        *'$ '*|*'Running'*|*'Executing'*) detected="running" ;;
+      esac
+
+      if [[ -n "$detected" && "$detected" != "$current" ]]; then
+        now="$(date +%s)"
+        elapsed=$((now - step_start))
+        echo "$current $elapsed" >> "$stf"
+        current="$detected"
+        step_start="$now"
+        echo "$current $now" > "$sf"
+        if [[ "$verbose" != "1" ]]; then
+          echo "[$(date +'%F %T')] ▸ $current"
+        fi
+      fi
+    done
+  ) &
+  STEP_MONITOR_PID=$!
+}
+
+stop_step_monitor() {
+  if [[ -n "$STEP_MONITOR_PID" ]]; then
+    kill "$STEP_MONITOR_PID" 2>/dev/null || true
+    wait "$STEP_MONITOR_PID" 2>/dev/null || true
+    STEP_MONITOR_PID=""
+  fi
+
+  if [[ -n "$STEP_FILE" && -f "$STEP_FILE" && -n "$STEP_TIMING_FILE" ]]; then
+    local last_step last_start now elapsed
+    read -r last_step last_start < "$STEP_FILE" 2>/dev/null || true
+    now="$(date +%s)"
+    if [[ -n "$last_start" && "$last_start" =~ ^[0-9]+$ ]]; then
+      elapsed=$((now - last_start))
+      echo "$last_step $elapsed" >> "$STEP_TIMING_FILE"
+    fi
+  fi
+  [[ -n "$STEP_FILE" ]] && rm -f "$STEP_FILE"
+  STEP_FILE=""
+}
+
+collect_step_summary() {
+  if [[ -z "$STEP_TIMING_FILE" || ! -f "$STEP_TIMING_FILE" ]]; then
+    echo "none"
+    return 0
+  fi
+  local result
+  result="$(awk '
+    {
+      if (!($1 in seen)) { keys[++n] = $1; seen[$1] = 1 }
+      steps[$1] += $2
+    }
+    END {
+      first = 1
+      for (i = 1; i <= n; i++) {
+        s = keys[i]
+        if (s == "starting") continue
+        if (!first) printf ","
+        printf "%s:%d", s, steps[s]
+        first = 0
+      }
+      if (!first) printf "\n"
+    }
+  ' "$STEP_TIMING_FILE" 2>/dev/null || true)"
+  rm -f "$STEP_TIMING_FILE"
+  STEP_TIMING_FILE=""
+  if [[ -z "$result" ]]; then
+    echo "none"
+  else
+    printf '%s\n' "$result"
+  fi
+}
+
 maintenance_ran=0
 maintenance_seconds=0
 maintenance_sections_moved=0
@@ -1248,6 +1359,7 @@ while true; do
   fi
 
   if [[ "$guard_violation" -ne 1 || "$RALPH_FAIL_ON_TODO_DUPLICATES" != "1" ]]; then
+    start_step_monitor "$log_file"
     set +e
     while true; do
       local_attempt_log="$(mktemp)"
@@ -1287,6 +1399,7 @@ while true; do
       break
     done
     set -e
+    stop_step_monitor
   else
     echo "[$(date +'%F %T')] abort: duplicate TODO sections detected and RALPH_FAIL_ON_TODO_DUPLICATES=1" >> "$log_file"
   fi
@@ -1430,6 +1543,7 @@ while true; do
   echo "maintenance_ran=$maintenance_ran" >> "$run_dir/meta.txt"
   echo "maintenance_seconds=$maintenance_seconds" >> "$run_dir/meta.txt"
   echo "maintenance_sections_moved=$maintenance_sections_moved" >> "$run_dir/meta.txt"
+  echo "steps=$(collect_step_summary)" >> "$run_dir/meta.txt"
   if [[ "$RALPH_REPORT_RUNS" == "1" && -x "$REPORT_RUNS_SCRIPT" ]]; then
     "$REPORT_RUNS_SCRIPT" --date "$(date +%F)" >/dev/null 2>&1 || true
   fi
